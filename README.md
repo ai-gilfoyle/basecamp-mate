@@ -672,12 +672,18 @@ one that signs in as the owner, nothing is read: the assignments would be the ow
   with `sync.py unwatch --chat <chat URL>`, or once its `--until` day (in the people's zone)
   has passed: the sweep then drops it and logs that. The lines recorded stay, so `reply`
   still answers them. Watching a chat again replaces its options, cursor and boost baseline; a chat in
-  `chats` is refused, since the chat inbox reads it already, as are a URL in another
-  account and an `--until` day already past. Basecamp may report a Campfire reply to the
+  `chats` is refused, since the chat inbox reads it already, as is a Ping (a `circles`
+  URL, a chat in a Ping bucket in `pings.json`, or one whose lines are in a `Circle`), since
+  the Ping reader relays it and its lines would be recorded twice, a URL in another
+  account and an `--until` day already past. Pass the URL of the line being replied to
+  (`.../chats/<chat>@<line>`, a record's `url`), so an answer posted before `watch` runs is
+  not missed. Basecamp may report a Campfire reply to the
   agent's line as a `Mention` or as a `Chat` notification; no recorded example of either
-  shape exists here, so both run the chat reader. A watched chat's project is part of the
-  home's run claim (see "One home per project and login"). A home that never runs `watch`
-  reads exactly as before.
+  shape exists here, so both run the chat reader. A watch never makes a timer run refuse:
+  when another home's live run reads the watched chat's project with the same login, each
+  run skips that chat and logs `watch: skipping watched chat` once (and `reading the watched
+  chats ... again` once that stops), so that home relays it; the watch stays (see "One home
+  per project and login"). A home that never runs `watch` reads exactly as before.
 - Asking the owner: with `ask_chat` set,
   `sync.py ask --home <home> --config <config.json> --body-file <file>` posts the file's
   Markdown (rendered like a reply) as a new line in that chat as the acting user,
@@ -820,9 +826,7 @@ one that signs in as the owner, nothing is read: the assignments would be the ow
 Two homes whose configs watch the same project with the same Basecamp login would each
 read the same notifications, record the same input, acknowledge it twice and wake two
 agents. The shared state lock cannot stop that, since it is per config, so every timer run
-first claims what its config watches ([`runs.py`](runs.py)): its project and the project
-of each chat its home watches with `sync.py watch` (read under the shared state lock the
-whole run holds, so a watch started meanwhile waits for the next run), and,
+first claims what its config watches ([`runs.py`](runs.py)): its project, and,
 account-wide, its login's Pings (with `pings`), the to-dos assigned to it anywhere
 (with `"assigned_todos": {"scope": "account"}`) and its @mentions and followed threads
 anywhere (with `"mentions": {"scope": "account"}`). Two claims overlap when they share one of
@@ -831,7 +835,12 @@ those with the same login: the same Basecamp person when both runs know it, else
 nothing, exits 1 and logs `FAILED duplicate run`, naming the other home, its config and
 login, when it last ran or its pid if it is running now (once, then hourly, so the wake
 check and `doctor` see it without flooding the log). When the other run stops, the next
-run says `duplicate run cleared` and carries on. Two runs of the same config are never
+run says `duplicate run cleared` and carries on. A chat its home watches with `sync.py
+watch` is never claimed and never refuses a run: when another home's live run on the same
+login claims that chat's project, the run skips that chat (logged once when that starts
+and once when it ends), checked every run, so a home that starts after the watch is
+covered too. The watches are read under the shared state lock the whole run holds, so a
+watch started meanwhile waits for the next run. Two runs of the same config are never
 duplicates: they share one claim and the state lock serializes them, and the explicit
 commands (`reply`, `todo ...`) never claim.
 
@@ -1324,8 +1333,10 @@ ignored, a watch read by the sweep without mentions anywhere, the first read sta
 `--after-line` (or the line the URL names, else the newest line), a watch relaying a plain
 line without `?`, a delayed `Mention` of a line at or before the start never relayed (in
 another project and in this one), watching again taking the boosts there now as its
-baseline (counts and boost ids), a watched chat's project in the run claim and a watch
-started during the claim waiting for the run, a reply
+baseline (counts and boost ids), a watched chat in a project another home on this login
+reads skipped (logged once, the watch kept, never a refused run, read again once that home
+stops) and a notification for it left alone, another login or a stale claim not skipping
+it, a watch started during the claim waiting for the run, a Ping refused, a reply
 that comes as a `Mention` recorded once, the owner's boost on the agent's line there, `reply`
 answering in that chat, `unwatch` stopping reads, a watch past its `--until` day reading
 nothing and ending, refusals (a past day, another account, a configured chat, a URL that is

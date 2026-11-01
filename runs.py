@@ -7,12 +7,16 @@ every timer run claims what it watches here before it reads anything, and refuse
 beside a live claim that overlaps, naming the other home. Two runs of the same config
 never collide here: they share one claim, and the state lock serializes them.
 
-What a config watches (`watches`): its project and the project of each chat its home
-watches with `sync.py watch`, and, account-wide, the Pings of its login
+What a config watches (`watches`): its project, and, account-wide, the Pings of its login
 ("pings"), the to-dos assigned to its login anywhere ("assigned_todos" with "scope":
 "account") and its @mentions and followed threads anywhere ("mentions" with "scope":
 "account"). Two claims overlap when they share one of those with the same login: the same
 Basecamp person when both know it, else the same CLI profile.
+
+A chat its home watches with `sync.py watch` never makes a run refuse: its project is
+not claimed. Instead, when another live home on the same login claims that project,
+`claim` reports it as held and the run skips that chat (Sync.claim), so the home that
+owns the project reads it alone; this also covers a home that starts after the watch.
 
 Each config's claim is one file, `<digest of the config path>.json`, in the directory
 $BASECAMP_MATE_RUNS (default ~/.local/state/basecamp-mate/runs): the config, the home,
@@ -38,12 +42,10 @@ def directory():
         os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "basecamp-mate", "runs")
 
 
-def watches(cfg, buckets=()):
-    """What a config watches in Basecamp, as tokens two configs can share; `buckets` are the projects of the chats its
-    home watches (`sync.py watch`), each claimed like the config's own project."""
+def watches(cfg):
+    """What a config watches in Basecamp, as tokens two configs can share."""
     account = str(cfg["account"])
     out = [f"project {account}/{cfg['project']}"]
-    out += sorted({f"project {account}/{b}" for b in buckets} - set(out))
     if cfg.get("pings") not in (None, False):
         out.append(f"pings {account}")
     opts = cfg.get("assigned_todos")
@@ -115,6 +117,7 @@ def describe(claim, now):
 class Registry:
     def __init__(self, path=None, now=time.time):
         self.dir, self.now = path or directory(), now
+        self.held = {}  # set by claim: watched project id -> the live claims of other homes on this login that hold it
 
     def file(self, config):
         return os.path.join(self.dir, hashlib.sha256(os.path.realpath(config).encode()).hexdigest()[:16] + ".json")
@@ -145,11 +148,15 @@ class Registry:
 
         Nothing is claimed when any overlap and `allow` is false; the caller refuses to run.
         A dry run checks and claims nothing. Claims whose config is gone and whose run is
-        over are removed.
+        over are removed. `buckets` are the projects of the chats this home watches (`sync.py
+        watch`): never claimed and never an overlap; each one another live home on this login
+        claims as its project is left in `self.held` (project id -> those claims), for the
+        caller to skip.
         """
         config = os.path.realpath(config)
         mine = {"config": config, "home": os.path.abspath(home), "profile": cfg.get("profile") or "",
-                "person": person if isinstance(person, int) else None, "watches": watches(cfg, buckets)}
+                "person": person if isinstance(person, int) else None, "watches": watches(cfg)}
+        account, self.held = str(cfg["account"]), {}
         with self.locked():
             now = self.now()
             others = []
@@ -163,6 +170,10 @@ class Registry:
                 shared = overlap(mine, c)
                 if shared and live(c, now):
                     others.append((c, shared))
+                if same_login(mine, c) and live(c, now):
+                    for b in buckets:
+                        if str(b) != str(cfg["project"]) and f"project {account}/{b}" in (c.get("watches") or []):
+                            self.held.setdefault(str(b), []).append(c)
             if (others and not allow) or dry:
                 return others
             pid = os.getpid()

@@ -154,17 +154,39 @@ class Sync(Tools):
         at most hourly, and the run reads nothing. "allow_duplicate": true in the config (or
         `allow`) runs anyway, noting the overlap once. A dry run checks and claims nothing,
         and only prints.
+
+        A chat watched with `sync.py watch` never refuses the run: when another live home on
+        this login reads the chat's project as its own, this run skips that chat
+        (`watch_held`), logged when that starts and when it ends, so that home reads it
+        alone; this is checked every run, so it also covers a home that starts after the watch.
         """
         allow = allow or self.cfg.get("allow_duplicate") is True
         me = self.acting_id()
         reg = runs.Registry()
+        self.watch_held = set()
         buckets = {str(r.get("bucket") or self.project) for r in self.watches().values()}
         others = reg.claim(self.config_path, self.home, self.cfg, me if isinstance(me, int) else None, allow=allow, dry=self.dry,
                            buckets=buckets)
+        self.watch_held = set(reg.held)
         now, say = reg.now(), print if self.dry else self.log
         homes = sorted(c.get("home") or "?" for c, _ in others)
         with self.locked("sync"):
             timer = self.load("timer.json", {})
+            held = {b: sorted(c.get("home") or "?" for c in cs) for b, cs in sorted(reg.held.items())}
+            if held != (timer.get("watch_held") or {}):
+                for b, hs in held.items():
+                    if (timer.get("watch_held") or {}).get(b) != hs:
+                        chats = sorted(c for c, r in self.watches(held=True).items() if str(r.get("bucket") or self.project) == b)
+                        say(f"watch: skipping watched chat {', '.join(chats)} in project {b}: another home's live run "
+                            f"reads that project with this login ({', '.join(hs)}), so that home relays it")
+                for b in sorted(set(timer.get("watch_held") or {}) - set(held)):
+                    say(f"watch: reading the watched chats in project {b} again: no other home's live run reads it now")
+                if held:
+                    timer["watch_held"] = held
+                else:
+                    timer.pop("watch_held", None)
+                if not self.dry:
+                    self.save_json("timer.json", timer)
             dup = timer.get("duplicate") or {}
             hourly = not allow and now - dup.get("noted", 0) >= DUPLICATE_NOTE
             if others and (dup.get("with") != homes or dup.get("allowed") != allow or hourly):

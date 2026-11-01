@@ -61,6 +61,9 @@ class Tools:
         self.config_path = os.path.abspath(config_path)
         self.dir = os.path.dirname(self.config_path)
         self.held = set()
+        # Projects of watched chats (`sync.py watch`) another live home on this login reads as its project, set by
+        # Sync.claim each run: those chats are skipped, so that home reads them alone.
+        self.watch_held = set()
         self.cfg = cfg = json.load(open(config_path))
         self.account, self.project = str(cfg["account"]), str(cfg["project"])
         self.captain = int(cfg["captain"])  # the owner: assignee, and the first person whose word is a decision
@@ -1587,12 +1590,17 @@ class Tools:
         `until` (YYYY-MM-DD, in the people's zone) ends the watch once that day has
         passed. Watching again replaces the watch's options, cursor and boost baseline (the
         boost counts there now, and the ids of the boosts already on its lines).
-        A chat in "chats" is refused: the chat inbox reads it already. A dry run reads and
-        logs only.
+        A chat in "chats" is refused: the chat inbox reads it already; so is a Ping (a
+        circle bucket), which the Ping reader relays, so its lines would be recorded twice.
+        A dry run reads and logs only.
         """
+        if re.search(r"basecamp(?:api)?\.com/\d+/circles/", str(url)):
+            raise ValueError(f"{url!r} is a Ping: the Ping reader relays it (\"pings\"), so it is not watched")
         bucket, chat, line = parse_chat_url(url, self.account)
         if chat in configured_chats(self.cfg):
             raise ValueError(f'chat {chat} is in the config\'s "chats": the chat inbox reads it already')
+        if bucket in {str(p.get("bucket")) for p in self.load("pings.json", {}).get("pings", {}).values()}:
+            raise ValueError(f"chat {chat} is a Ping: the Ping reader relays it (\"pings\"), so it is not watched")
         if until is not None:
             try:
                 ends = datetime.strptime(until, "%Y-%m-%d").date()
@@ -1601,6 +1609,8 @@ class Tools:
             if ends < self.local_today():
                 raise ValueError(f"--until {until} has already passed")
         lines = self.bc("api", "get", f"/buckets/{bucket}/chats/{chat}/lines.json", project=bucket) or []
+        if any((ln.get("bucket") or {}).get("type") == "Circle" for ln in lines):
+            raise ValueError(f"chat {chat} is a Ping: the Ping reader relays it (\"pings\"), so it is not watched")
         start = int(after_line if after_line is not None else line if line is not None else
                     max([ln.get("id", 0) for ln in lines] + [0]))
         here = bucket == str(self.project)
@@ -1639,8 +1649,9 @@ class Tools:
         self.log(f"unwatch: stopped watching chat {chat}")
         return True
 
-    def watches(self):
-        """The chats watched now, as {chat id: its chats.json record}; a watch whose "until" day has passed is left out."""
+    def watches(self, held=False):
+        """The chats watched now, as {chat id: its chats.json record}; a watch whose "until" day has passed is left out,
+        and so, unless `held`, is one in a project another home on this login reads this run (`watch_held`)."""
         today = None
         out = {}
         for chat, rec in self.load("chats.json", {}).items():
@@ -1651,12 +1662,14 @@ class Tools:
                 today = today or self.local_today()
                 if datetime.strptime(w["until"], "%Y-%m-%d").date() < today:
                     continue
+            if not held and str(rec.get("bucket") or self.project) in self.watch_held:
+                continue
             out[chat] = rec
         return out
 
     def end_watches(self):
         """Drop each watch whose "until" day has passed from chats.json, logged; the chat's cursor and lines stay."""
-        state, live = self.load("chats.json", {}), self.watches()
+        state, live = self.load("chats.json", {}), self.watches(held=True)
         ended = [c for c, r in state.items() if isinstance(r.get("watch"), dict) and c not in live]
         if not ended or self.dry:
             return ended

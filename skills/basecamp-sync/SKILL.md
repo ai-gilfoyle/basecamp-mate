@@ -210,7 +210,8 @@ Two homes on this computer that watch the same project, the same login's Pings, 
 account-wide to-do requests with the same Basecamp login would each relay the same input.
 So each timer run claims what its config watches, and a run beside another home's live
 claim that overlaps is refused: it reads nothing and logs `FAILED duplicate run`, naming
-the other home (once, then hourly). A claim stops blocking within 10 minutes of its home's
+the other home (once, then hourly). A chat watched with `sync.py watch` never refuses a
+run; its chat is skipped while another home on this login reads that project. A claim stops blocking within 10 minutes of its home's
 last run, so a stopped timer or a removed config frees it. `basecamp-mate status` lists
 every claim, live or stale, and any sync.py running without one; `basecamp-mate doctor`
 flags overlapping homes. `"allow_duplicate": true` in a config (or `--allow-duplicate` on
@@ -317,13 +318,17 @@ that read.
 - After you ask someone a question in a chat outside the project (for example with `reply`
   to their line there), watch that chat so their plain answer reaches you without an
   @mention:
-  `python3 $SYNC/sync.py watch --home <home> --config <home>/data/basecamp-sync/config.json --chat <chat or line URL> --until <YYYY-MM-DD>`.
-  The watch starts after the line the URL names (else the chat's newest line), so your
-  question and older lines are never relayed, even when a late notification names one.
+  `python3 $SYNC/sync.py watch --home <home> --config <home>/data/basecamp-sync/config.json --chat <URL> --until <YYYY-MM-DD>`.
+  Pass the `url` of the line you replied to (the record's `url`, ending in `@<line id>`):
+  the watch starts after the line the URL names (else the chat's newest line), so an
+  answer posted before `watch` runs is not missed, while older lines are never relayed,
+  even when a late notification names one; your own lines never are.
   Every line of the people the sync listens to comes through, so a plain answer without
   `?` reaches you. Their lines arrive as `chat-question` records carrying
   `project`; answer with `reply`. Once answered, stop with `sync.py unwatch --chat <URL>`
-  (`--until` also ends it). A chat in the config's `chats` needs no watch.
+  (`--until` also ends it). A chat in the config's `chats` needs no watch, and a Ping is
+  refused (the Ping reader relays it). If `sync.log` says `watch: skipping watched chat`,
+  another home on this login reads that project and relays the chat instead.
 - To put a question or decision to the owner in chat (only when `ask_chat` is set), post
   one per line with
   `python3 $SYNC/sync.py ask --home <home> --config <home>/data/basecamp-sync/config.json --body-file <file>`;

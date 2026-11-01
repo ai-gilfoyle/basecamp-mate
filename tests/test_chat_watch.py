@@ -211,6 +211,17 @@ class Ending(Base):
             self.assertIn(why, self.log())
         self.assertNotIn("78", self.chats())
 
+    def test_a_ping_is_refused_since_the_ping_reader_relays_it(self):
+        CIRCLE = 99999990
+        self.stub.lines["91"] = [dict(line(1), bucket={"id": CIRCLE, "name": "Owner + Agent", "type": "Circle"})]
+        json.dump({"pings": {"92": {"bucket": CIRCLE + 1, "chat": "92"}}}, open(os.path.join(self.cfgdir, "pings.json"), "w"))
+        for chat in (f"https://3.basecamp.com/{ACCOUNT}/circles/{CIRCLE}@1",
+                     f"https://3.basecamp.com/{ACCOUNT}/buckets/{CIRCLE}/chats/91",
+                     f"https://3.basecamp.com/{ACCOUNT}/buckets/{CIRCLE + 1}/chats/92"):
+            self.assertEqual(self.watch(chat=chat), 1)
+        self.assertEqual(self.log().count("is a Ping: the Ping reader relays it"), 3)
+        self.assertFalse({"91", "92"} & set(self.chats()))
+
     def test_dry_run_reads_and_saves_nothing(self):
         self.watch("--dry-run")
         self.assertNotIn("78", self.chats())
@@ -233,27 +244,66 @@ class Access(Base):
 
 
 class Claim(Base):
-    def test_a_watched_chat_claims_its_project_so_a_home_reading_that_project_with_this_login_refuses(self):
-        self.watch()
+    def other_home(self, profile=None, last_run=None):
+        """Record a live claim of another home on this login (or `profile`) that reads project OTHER as its own."""
         reg = runs.Registry()
         os.makedirs(reg.dir, exist_ok=True)
         other = os.path.join(self.tmp, "other.json")
         cfg = dict(json.load(open(os.path.join(self.cfgdir, "config.json"))), project=OTHER)
+        if profile is not None:
+            cfg["profile"] = profile
         json.dump(cfg, open(other, "w"))
         with open(reg.file(other), "w") as f:
-            json.dump({"config": os.path.realpath(other), "home": self.tmp, "profile": cfg.get("profile") or "",
-                       "person": None, "watches": runs.watches(cfg), "pid": None, "last_run": time.time()}, f)
-        self.stub.calls.clear()
-        with redirect_stdout(io.StringIO()):
-            code = sync.cli(["--home", self.home, "--config", os.path.join(self.cfgdir, "config.json")], runner=self.stub)
-        self.assertEqual(code, 1)
-        self.assertIn(f"also watching project {ACCOUNT}/{OTHER}", self.log())
-        self.assertEqual(self.reads_there(), [])
-        self.watch(what="unwatch")
-        with redirect_stdout(io.StringIO()):
-            self.assertEqual(sync.cli(["--home", self.home, "--config", os.path.join(self.cfgdir, "config.json")],
-                                      runner=self.stub), 0)
+            json.dump({"config": os.path.realpath(other), "home": "/other-home", "profile": cfg.get("profile") or "",
+                       "person": None, "watches": runs.watches(cfg), "pid": None,
+                       "last_run": time.time() if last_run is None else last_run}, f)
+        return reg.file(other)
 
+    def timer(self):
+        """One timer run, with the watch's hourly sweep due."""
+        state = self.state("timer.json")
+        state.get("ran", {}).pop("chat-watch", None)
+        json.dump(state, open(os.path.join(self.cfgdir, "timer.json"), "w"))
+        with redirect_stdout(io.StringIO()):
+            return sync.cli(["--home", self.home, "--config", os.path.join(self.cfgdir, "config.json")], runner=self.stub)
+
+    def test_a_watched_chat_in_a_project_another_home_reads_with_this_login_is_skipped_never_the_run(self):
+        self.watch()
+        claim = self.other_home()  # it started after the watch: the next run sees it
+        self.stub.lines["78"].append(there(2))
+        self.stub.calls.clear()
+        self.assertEqual(self.timer(), 0)
+        self.assertEqual(self.timer(), 0)
+        self.assertEqual((self.pending(), self.reads_there()), ([], []))
+        self.assertEqual(self.log().count("watch: skipping watched chat 78 in project 88888888: another home's live run "
+                                          "reads that project with this login (/other-home), so that home relays it"), 1)
+        self.assertNotIn("FAILED", self.log())
+        self.assertIn("watch", self.chats()["78"])  # skipped, not ended
+        [mine] = [c for c in runs.Registry().claims() if c["home"] == self.home]
+        self.assertEqual(mine["watches"], [f"project {ACCOUNT}/{PROJECT}"])  # a watch never claims, so never refuses it
+        os.remove(claim)
+        self.assertEqual(self.timer(), 0)
+        self.assertEqual([r["line"] for r in self.pending()], [2])
+        self.assertIn("watch: reading the watched chats in project 88888888 again: no other home's live run reads it now",
+                      self.log())
+
+    def test_a_notification_for_a_skipped_chat_is_left_to_the_other_home(self):
+        self.watch()
+        self.other_home()
+        self.stub.lines["78"].append(there(2))
+        self.notify(note(10, "Chat", thread=78, path="chats", section="chats", bucket=OTHER))
+        self.assertEqual(self.timer(), 0)
+        self.assertEqual((self.pending(), self.stub.marked), ([], []))
+
+    def test_another_login_or_a_stale_claim_does_not_skip_it(self):
+        self.watch()
+        for kw in ({"profile": "someone-else"}, {"last_run": time.time() - 2 * runs.STALE}):
+            claim = self.other_home(**kw)
+            self.stub.lines["78"].append(there(len(self.stub.lines["78"]) + 1))
+            self.assertEqual(self.timer(), 0)
+            os.remove(claim)
+        self.assertEqual([r["line"] for r in self.pending()], [2, 3])
+        self.assertNotIn("skipping watched chat", self.log())
 
     def test_a_watch_started_while_the_timer_claims_waits_so_the_run_reads_only_what_it_claimed(self):
         started = []

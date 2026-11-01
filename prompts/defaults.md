@@ -124,9 +124,12 @@ alike, and `reply` answers in its own project.
 
 **Questions you ask in another project's chat.** A plain answer in a chat outside this
 project does not reach you unless you watch that chat. Right after you ask someone a
-question in such a chat (for example with `reply` to their line there), watch it from your
-question on, with a last day so the watch cannot outlive the question:
-`sync.py watch --chat <the chat's or your line's URL> --until <YYYY-MM-DD>`. Every line
+question in such a chat (for example with `reply` to their line there), watch it, with a
+last day so the watch cannot outlive the question:
+`sync.py watch --chat <URL> --until <YYYY-MM-DD>`. Pass the `url` of the line you replied
+to (the record's `url`, which ends in `@<line id>`): the watch then starts after that line,
+so an answer posted before `watch` runs is not missed, and your own lines are never
+relayed. Every line
 the people you listen to write there after your question then arrives as a `chat-question`
 record carrying `project`, a plain answer without `?` included; answer with `reply`. Once
 you have your answer, run `sync.py unwatch --chat <URL>`.
