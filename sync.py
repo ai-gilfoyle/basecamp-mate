@@ -6,7 +6,8 @@ readers poll Basecamp and append pending records; the commands post exactly what
 the agent hands them (`reply`, `ask`, `answer`, `todo ...`, `post-message`).
 behaviors.py is the behaviors layer: opt-in workflows a home turns on in its config
 and that compose the tools: the card mirror ("tables", "repos"; off with "cards":
-false), the chat inbox ("chats"), chat asks ("ask_chat"), check-in answering
+false), the chat inbox ("chats"), chat watches (`sync.py watch`: one chat in any project of
+the account, kept in chats.json), chat asks ("ask_chat"), check-in answering
 ("checkins"), release announcements ("releases"), decision to-dos ("todos"),
 reports ("message_board"), Pings ("pings": the owner's direct messages to the agent's
 login), to-do requests ("assigned_todos": to-dos the owner assigns to the agent's login),
@@ -22,16 +23,16 @@ repair sweep (every 5 minutes without notifications). `--all` runs every step.
 
 Deterministic, no model calls. Safety bounds, enforced here:
   - only the configured account, project, card tables, chats, check-ins, to-do set
-    and message board are touched, and, with "pings" on, the Pings the agent's login
-    is in with the owner; with "assigned_todos" on, the project's to-dos assigned to
-    the agent's login (with "scope": "account", any project's) are read and
-    acknowledged with a 👀; the agent login's notifications and boosts are read across
-    the account, but only this project's (and those Pings and requests) are acted on,
-    and an owner's @mention of the agent anywhere in the project is relayed (with
+    and message board are touched, and the chats the agent watches with `sync.py
+    watch`, and, with "pings" on, the Pings the agent's login is in with the owner;
+    with "assigned_todos" on, the project's to-dos assigned to the agent's login (with
+    "scope": "account", any project's) are read and acknowledged with a 👀; the agent
+    login's notifications and boosts are read across the account, but only this
+    project's (and those Pings, requests and watched chats) are acted on, and an
+    owner's @mention of the agent anywhere in the project is relayed (with
     "mentions": {"scope": "account"}, anywhere in the account, and comments on threads
-    it follows there); with
-    "backup" on, the config and state files are uploaded to its Docs & Files folder
-    (a changed file as a new version of its upload there);
+    it follows there); with "backup" on, the config and state files are uploaded to
+    its Docs & Files folder (a changed file as a new version of its upload there);
   - nothing is ever deleted, trashed or archived, except the acting user's own 👀
     boost once a question is answered; the timer run posts no comment, and its only
     writes besides the card mirror are 👀/👍 acknowledgement boosts, marking the agent
@@ -50,6 +51,8 @@ the same project (or Pings, account-wide to-do requests or account-wide mentions
 Usage: sync.py --home <home> --config <config.json> [--all] [--dry-run] [--include-prereleases] [--allow-duplicate]
        sync.py status      (the runs recorded on this computer; also bin/basecamp-mate status)
        sync.py reply --home <home> --config <config.json> --recording <comment, chat line or Ping line id> --body-file <file> [--again] [--dry-run]
+       sync.py watch --home <home> --config <config.json> --chat <chat URL> [--after-line <line id>] [--every-line] [--until YYYY-MM-DD] [--dry-run]
+       sync.py unwatch --home <home> --config <config.json> --chat <chat URL> [--dry-run]
        sync.py ask --home <home> --config <config.json> --body-file <file> [--dry-run]
        sync.py answer --home <home> --config <config.json> --question <check-in question id> --body-file <file> [--dry-run]
        sync.py todo create --home <home> --config <config.json> --key <key> --title <text> [--body-file <file>] [--project <id>] [--list <id>] [--due YYYY-MM-DD] [--subtask <question>]... [--card-table <id> --column <id>] [--dry-run]
@@ -308,6 +311,21 @@ def cli(argv=None, runner=subprocess.run):
         ap.add_argument("--dry-run", action="store_true")
         a = ap.parse_args(argv[1:])
         return command(a, f"reply {a.recording}", lambda s: s.reply(a.recording, read(a.body_file), again=a.again), runner)
+    if argv[:1] in (["watch"], ["unwatch"]):
+        what = argv[0]
+        ap = common(f"sync.py {what}", "Watch one chat in any project of the account: relay the listened-to people's lines "
+                    "there from a given line on." if what == "watch" else "Stop watching a chat.")
+        ap.add_argument("--chat", required=True, help="the chat's Basecamp URL (a line's URL, chats/<chat>@<line>, also works)")
+        if what == "watch":
+            ap.add_argument("--after-line", type=int, help="relay only lines after this one (default: the line the URL "
+                                                           "names, else the chat's newest line now)")
+            ap.add_argument("--every-line", action="store_true",
+                            help='relay every line, not only questions ("?"), @mentions and replies to the agent')
+            ap.add_argument("--until", help="stop watching once this day (YYYY-MM-DD) has passed")
+        ap.add_argument("--dry-run", action="store_true")
+        a = ap.parse_args(argv[1:])
+        return command(a, what, lambda s: s.watch(a.chat, a.after_line, a.every_line, a.until) if what == "watch"
+                       else s.unwatch(a.chat), runner)
     if argv[:1] in (["ask"], ["answer"]):
         what = argv[0]
         ap = common(f"sync.py {what}", "Post a new line in the configured ask_chat, @mentioning the owner." if what == "ask"

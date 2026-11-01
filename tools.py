@@ -682,17 +682,21 @@ class Tools:
         line is recorded. `addressed` holds line ids a notification says address the
         acting user (an @mention, or a Campfire reply to one of its lines, which carries
         no mention): each is recorded like a question, even when the cursor has passed
-        it, unless it already was. A dry run reads and logs only.
+        it, unless it already was. A chat whose chats.json record has a "bucket" (a chat
+        watched or mentioned in another project of the account) is read there, and its
+        records carry that `project`; a line already recorded is never recorded again. A
+        dry run reads and logs only.
         """
         state = self.load("chats.json", {})
         for chat in chats:
+            rec = dict(state.get(chat, {}))
+            bucket = str(rec.get("bucket") or self.project)
             try:
-                lines = self.bc("api", "get", f"/buckets/{self.project}/chats/{chat}/lines.json") or []
+                lines = self.bc("api", "get", f"/buckets/{bucket}/chats/{chat}/lines.json", project=bucket) or []
             except RuntimeError as e:
                 self.log(f"chat {chat}: {e}")
                 continue
             lines = sorted(lines, key=lambda l: l.get("id", 0))
-            rec = dict(state.get(chat, {}))
             first = "cursor" not in rec
             cursor = rec.get("cursor", 0)
             for ln in lines:
@@ -701,36 +705,37 @@ class Tools:
                 if lid <= cursor and not late:
                     continue
                 cursor = max(cursor, lid)
-                if first:
+                if first or lid in rec.get("lines", []):
                     continue
                 content = ln.get("content", "")
-                if not self.hears(ln.get("creator")):
+                if not self.hears(ln.get("creator"), bucket=bucket):
                     if lid in addressed or self.addressed(content):
-                        self.block(ln.get("creator"), self.project, chat, lid, ln.get("created_at"), chat=True, what="chat line")
+                        self.block(ln.get("creator"), bucket, chat, lid, ln.get("created_at"), chat=True, what="chat line")
                     continue
                 text = html.unescape(re.sub(r"<[^>]+>", "", content)).strip()
                 if "?" not in text and chat not in every_line and lid not in addressed and not self.addressed(content):
                     continue
                 if self.dry:
                     self.log(f"dry chat {chat}: captain question {lid}")
-                    self.acknowledge(f"chat {chat}", dict(rec, ack=[*rec.get("ack", []), [lid, self.read_ack()]]))
+                    self.acknowledge(f"chat {chat}", dict(rec, ack=[*rec.get("ack", []), [lid, self.read_ack()]]), bucket)
                     continue
                 self.record({"kind": "chat-question", "chat": int(chat), "line": lid,
-                             "url": ln.get("app_url") or f"https://3.basecamp.com/{self.account}/buckets/{self.project}/chats/{chat}@{lid}",
-                             "text": text, "at": ln.get("created_at"), **self.author(ln.get("creator"))})
+                             "url": ln.get("app_url") or f"https://3.basecamp.com/{self.account}/buckets/{bucket}/chats/{chat}@{lid}",
+                             "text": text, "at": ln.get("created_at"), **self.elsewhere(bucket, ln, rec),
+                             **self.author(ln.get("creator"), bucket)})
                 rec.setdefault("lines", []).append(lid)
                 rec.setdefault("ack", []).append([lid, self.read_ack()])
                 self.log(f"new captain chat question in {chat}: {lid}")
             self.read_boosts(rec, "chat", {"chat": int(chat)},
-                             counted=boost_items(lines))
+                             counted=boost_items(lines), bucket=bucket)
             if self.dry:
                 if first:
                     self.log(f"dry chat {chat}: would start the cursor at {cursor}")
-                self.acknowledge(f"chat {chat}", rec)
+                self.acknowledge(f"chat {chat}", rec, bucket)
                 continue
             rec["cursor"] = cursor
             state[chat] = rec
-            self.acknowledge(f"chat {chat}", rec)
+            self.acknowledge(f"chat {chat}", rec, bucket)
             self.save_json("chats.json", state)
 
     def today(self):
@@ -1556,6 +1561,101 @@ class Tools:
         self.save_json("chats.json", state)
         return True
 
+    # --- chat watches: one chat in any project of the account, read from a given line on (`sync.py watch`) ---
+
+    def watch(self, url, after_line=None, every_line=False, until=None):
+        """Watch the chat at `url` (any project of the account) from line `after_line` on, until `unwatch` or `until` passes.
+
+        The watch lives in chats.json beside the chat's cursor, not in the config: the
+        chat's lines are read once now (which proves the agent's login can read it), and
+        the cursor starts at `after_line`, else at the line the URL names, else at the
+        newest line, so neither the agent's own question nor older lines are relayed.
+        From then on the chat-watch behavior and notifications read it like a chat in
+        "chats": a listened-to line with "?", an @mention of the agent or a Campfire
+        reply to it is recorded, or, with `every_line`, every listened-to line. A record
+        from another project carries `project`, and `reply` answers there. `until`
+        (YYYY-MM-DD, in the people's zone) ends the watch once that day has passed.
+        Watching again replaces the watch's options and cursor. A chat in "chats" is
+        refused: the chat inbox reads it already. A dry run reads and logs only.
+        """
+        bucket, chat, line = parse_chat_url(url, self.account)
+        if chat in configured_chats(self.cfg):
+            raise ValueError(f'chat {chat} is in the config\'s "chats": the chat inbox reads it already')
+        if until is not None:
+            try:
+                ends = datetime.strptime(until, "%Y-%m-%d").date()
+            except ValueError:
+                raise ValueError(f"--until {until!r} is not a date (YYYY-MM-DD)")
+            if ends < self.local_today():
+                raise ValueError(f"--until {until} has already passed")
+        lines = self.bc("api", "get", f"/buckets/{bucket}/chats/{chat}/lines.json", project=bucket) or []
+        start = int(after_line if after_line is not None else line if line is not None else
+                    max([ln.get("id", 0) for ln in lines] + [0]))
+        here = bucket == str(self.project)
+        name = next(filter(None, ((ln.get("bucket") or {}).get("name") for ln in lines)), None)
+        what = (f"chat {chat}" + ("" if here else f" in project {name + ' ' if name else ''}({bucket})")
+                + f" from line {start}" + (", every line" if every_line else "") + (f", until {until}" if until else ""))
+        if self.dry:
+            self.log(f"dry watch: would watch {what}")
+            return False
+        state = self.load("chats.json", {})
+        rec = state.setdefault(chat, {})
+        if not here:
+            rec.update(bucket=int(bucket), **({"project_name": name} if name else {}))
+        rec["cursor"] = start
+        if "boost_counts" not in rec:  # the boosts there now, so the first read relays only the owner's boosts after this
+            rec["boost_counts"] = {str(rid): count for rid, _, count, _ in boost_items(lines)}
+        rec["watch"] = {"every_line": bool(every_line), "until": until, "since": now_iso()}
+        self.save_json("chats.json", state)
+        self.log(f"watch: watching {what}")
+        return True
+
+    def unwatch(self, url):
+        """Stop watching the chat at `url`; its recorded lines stay, so `reply` still answers them. A dry run logs only."""
+        _, chat, _ = parse_chat_url(url, self.account)
+        state = self.load("chats.json", {})
+        if "watch" not in state.get(chat, {}):
+            self.log(f"unwatch: chat {chat} is not watched")
+            return False
+        if self.dry:
+            self.log(f"dry unwatch: would stop watching chat {chat}")
+            return False
+        state[chat].pop("watch")
+        self.save_json("chats.json", state)
+        self.log(f"unwatch: stopped watching chat {chat}")
+        return True
+
+    def watches(self):
+        """The chats watched now, as {chat id: its chats.json record}; a watch whose "until" day has passed is left out."""
+        today = None
+        out = {}
+        for chat, rec in self.load("chats.json", {}).items():
+            w = rec.get("watch")
+            if not isinstance(w, dict):
+                continue
+            if w.get("until"):
+                today = today or self.local_today()
+                if datetime.strptime(w["until"], "%Y-%m-%d").date() < today:
+                    continue
+            out[chat] = rec
+        return out
+
+    def end_watches(self):
+        """Drop each watch whose "until" day has passed from chats.json, logged; the chat's cursor and lines stay."""
+        state, live = self.load("chats.json", {}), self.watches()
+        ended = [c for c, r in state.items() if isinstance(r.get("watch"), dict) and c not in live]
+        if not ended or self.dry:
+            return ended
+        for chat in ended:
+            self.log(f"watch: chat {chat} no longer watched: {state[chat]['watch']['until']} has passed")
+            state[chat].pop("watch")
+        self.save_json("chats.json", state)
+        return ended
+
+    def local_today(self):
+        """Today's date in the people's zone."""
+        return datetime.now(self.zone()).date()
+
     def read_thread(self, bucket, thread, since, mentions=(), ptype=None, title=None, after=None):
         """Record the listened-to people's new comments on recording `thread` (in `bucket`), a thread no other reader
         tracks but the acting user is subscribed to or @mentioned in: a card whatever its backlog state, a document, an
@@ -2349,6 +2449,22 @@ def todo_schedule(todo):
 def plain(content):
     """Basecamp rich text as one line of plain text."""
     return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", content or ""))).strip()
+
+
+def parse_chat_url(url, account):
+    """(bucket, chat, line or None) of a Basecamp chat URL in `account`, like
+    https://3.basecamp.com/<account>/buckets/<bucket>/chats/<chat>[@<line>]; ValueError otherwise."""
+    m = re.search(r"basecamp(?:api)?\.com/(\d+)/buckets/(\d+)/chats/(\d+)(?:@(\d+))?", str(url))
+    if not m:
+        raise ValueError(f"{url!r} is not a Basecamp chat URL (https://3.basecamp.com/<account>/buckets/<project>/chats/<chat>)")
+    if m.group(1) != str(account):
+        raise ValueError(f"{url!r} is in account {m.group(1)}, not this home's account {account}")
+    return m.group(2), m.group(3), int(m.group(4)) if m.group(4) else None
+
+
+def configured_chats(cfg):
+    """The chat ids (as strings) in the config's "chats", which the chat inbox reads."""
+    return {str(c["chat"] if isinstance(c, dict) else c) for c in cfg.get("chats", [])}
 
 
 def boost_items(recordings):

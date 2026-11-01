@@ -247,6 +247,33 @@ class ChatInbox(Behavior):
         self.t.read_chats(self.chats, self.every_line)
 
 
+class ChatWatch(Behavior):
+    """Relay the listened-to people's lines in the chats watched with `sync.py watch`, in any project of the account.
+
+    A watch lives in chats.json, not in the config, so the agent starts one when it asks a
+    question in a chat outside the project, and `sync.py unwatch` (or its "until" day
+    passing) ends it. On while chats.json holds a watch. Notifications run the chat reader
+    for a watched chat as soon as it has a new line; the timer's step is the repair sweep
+    (hourly with notifications on, else every 5 minutes), which also ends the watches
+    whose day has passed.
+    """
+    name, keys = "chat-watch", ("chats.json watches: sync.py watch",)
+
+    def __init__(self, t, cfg):
+        super().__init__(t, cfg)
+        self.on = any(isinstance(r, dict) and "watch" in r for r in t.load("chats.json", {}).values())
+
+    def every_line(self, watched=None):
+        """The watched chats that relay every listened-to line."""
+        return {c for c, r in (self.t.watches() if watched is None else watched).items() if r["watch"].get("every_line")}
+
+    def run(self, items=None):
+        self.t.end_watches()
+        watched = self.t.watches()
+        if watched:
+            self.t.read_chats(sorted(watched), self.every_line(watched))
+
+
 class ChatAsks(Behavior):
     """The agent puts questions to the owner in chat with `sync.py ask`."""
     name, keys, timer = "chat-asks", ("ask_chat",), False
@@ -865,8 +892,9 @@ class Notifications(Behavior):
     existing reader for that thread runs once, records what is new by its own cursor and
     acknowledges it, exactly as the sweep would:
 
-      - a project chat in "chats": the chat reader, for that chat; an @mention or a
-        Campfire reply to the agent's line there is recorded even without "?";
+      - a project chat in "chats", or a chat watched with `sync.py watch` (in any project
+        of the account): the chat reader, for that chat; an @mention or a Campfire reply
+        to the agent's line there is recorded even without "?";
       - a Ping with an owner in it (pings on): the Ping reader, for that Ping;
       - a comment or @mention on a mirrored card, an open tracked to-do or the agent's
         own message: that card's, to-do's or message's reader;
@@ -881,7 +909,8 @@ class Notifications(Behavior):
     line in a chat not in "chats", a to-do assigned with assigned-todos off) is an
     `unmonitored` record, once per kind, unless "notifications" has "unmonitored": false
     (or an old "listen" had it). Items in other projects are another home's: never read
-    and never marked read here, except a Ping and an account-wide to-do request, and, with
+    and never marked read here, except a Ping, an account-wide to-do request, a line in a
+    watched chat, and, with
     "mentions": {"scope": "account"}, an @mention of the agent or a comment on a thread it
     follows there, which its thread reader (or, for a chat line, the mention reader)
     records as it would in the project, carrying that project.
@@ -924,6 +953,7 @@ class Notifications(Behavior):
             raise ValueError('config "mentions" must be {} or {"scope": "project" | "account"}')
         self.anywhere = self.on and (mentions or {}).get("scope") == "account"
         self.others = {}  # every behavior by name, set by configure()
+        self.watched = {}  # the chats watched this run (`sync.py watch`): chat id -> its chats.json record
 
     def run(self, items=None):
         """One pass: the changed notifications and new boosts, each thread's reader once, then inbox delivery."""
@@ -947,6 +977,7 @@ class Notifications(Behavior):
         readings = sorted((data.get("unreads") or []) + (data.get("reads") or []), key=stamp)
         first, first_boosts = "items" not in state, "boosts" not in state  # boosts unread on the first run seed later
         cursors, seen = state.get("items") or {}, set(state.get("boosts") or [])
+        self.watched = t.watches() if self.others["chat-watch"].on else {}
         want = {"cards": set(), "chats": {}, "todos": set(), "requests": {}, "checkins": False, "answers": False,
                 "messages": set(), "pings": {}, "mentions": {}, "threads": {}}
         work, old = [], set()  # work: (ref, mine, [group], check), one per changed notification or new boost
@@ -1015,8 +1046,9 @@ class Notifications(Behavior):
             if t.errors > before:
                 failed.add(group)
         step("cards", lambda: b["card-mirror"].relay(want["cards"]))
+        every_line = b["chat-inbox"].every_line | b["chat-watch"].every_line(self.watched)
         for chat, addressed in sorted(want["chats"].items()):
-            step(f"chat {chat}", lambda c=chat, a=addressed: t.read_chats([c], b["chat-inbox"].every_line, a))
+            step(f"chat {chat}", lambda c=chat, a=addressed: t.read_chats([c], every_line, a))
         step("todos", lambda: t.read_todo_comments(want["todos"]))
         # After the comment readers, so a comment made just before the closing is relayed first.
         for tid, req in sorted(want["requests"].items()):
@@ -1103,6 +1135,11 @@ class Notifications(Behavior):
             if keys and kind in ("Comment", "Mention"):
                 want["todos"] |= keys
                 return True, ["todos"], None
+            if (r.get("section") == "chats" or path == "chats") and self.watching(bucket, thread):
+                # A chat watched there (`sync.py watch`): its reader, as for a chat in "chats". A Campfire reply to the
+                # agent's line may come as a Mention (its line is addressed) or as a Chat notification; both read it.
+                want["chats"].setdefault(str(thread), set()).update([anchor] if kind == "Mention" and anchor else [])
+                return True, [f"chat {thread}"], None
             if not self.anywhere or kind not in ("Comment", "Mention"):
                 return False, [], None
             # "mentions": {"scope": "account"}: an @mention of the agent, or a comment on a thread it follows, read as in
@@ -1117,7 +1154,7 @@ class Notifications(Behavior):
         mention = kind == "Mention"
         if r.get("section") == "chats" or path == "chats":
             ci = b["chat-inbox"]
-            if ci.on and str(thread) in ci.chats:
+            if ci.on and str(thread) in ci.chats or self.watching(bucket, thread):
                 want["chats"].setdefault(str(thread), set()).update([anchor] if mention else [])
                 return True, [f"chat {thread}"], None
             if mention and (t.hears(who) or t.blocked_reply is not None):  # anyone else's mention: the automatic reply
@@ -1148,6 +1185,11 @@ class Notifications(Behavior):
         self.thread(want, bucket, thread, anchor, mention, THREADS.get(path), topic(r), stamp(r))
         return True, [f"thread {thread}"], None
 
+    def watching(self, bucket, chat):
+        """True when chat `chat` in `bucket` is watched this run (`sync.py watch`)."""
+        rec = self.watched.get(str(chat))
+        return rec is not None and str(rec.get("bucket") or self.t.project) == str(bucket)
+
     def reads(self, rec):
         """True when the behavior that owns tracked to-do `rec` is on: a card request's, a to-do request's, or (a decision
         to-do or decision card) decision-todos'."""
@@ -1177,6 +1219,9 @@ class Notifications(Behavior):
         keys = {k for k, r in todos.items() if (on_todo or on_card) is not None and r.get("todo") == (on_todo or on_card)
                 and (on_todo is not None or r.get("type") == "card")
                 and str(r.get("bucket") or t.project) == bucket}
+        if rtype == "Chat::Lines" and self.watching(bucket, parent.get("id")):
+            want["chats"].setdefault(str(parent.get("id")), set())
+            return True, [f"chat {parent.get('id')}"], None
         if rtype == "Chat::Lines" and bucket != t.project:
             circles = {str(c["bucket"]) for c in t.ping_conversations(data)} | {
                 str(p.get("bucket")) for p in t.load("pings.json", {}).get("pings", {}).values()}
@@ -1255,11 +1300,11 @@ def stamp(r):
 # The timer runs the "on" behaviors that are due in this order: blocked replies' clock, then notifications, so the
 # owner's input is not held up by the card mirror; inbox delivery after every reader, then the session alert, which
 # watches what it delivered.
-ALL = (BlockedReplies, Notifications, CardMirror, ChatInbox, ChatAsks, ReleaseAnnouncements, SecurityAdvisories, CheckinAnswering, DecisionTodos,
+ALL = (BlockedReplies, Notifications, CardMirror, ChatInbox, ChatWatch, ChatAsks, ReleaseAnnouncements, SecurityAdvisories, CheckinAnswering, DecisionTodos,
        AssignedTodos, AssignedCards, Reports, Pings, InboxDelivery, SessionAlert, Backup)
 # The readers notifications take over: with notifications on they run as the hourly repair sweep.
 # assigned-todos keeps its 5-minute sweep: a request's edits and the owner's boosts on it reach no notification.
-SWEPT = ("chat-inbox", "decision-todos", "reports", "pings")
+SWEPT = ("chat-inbox", "chat-watch", "decision-todos", "reports", "pings")
 
 
 WEEKDAYS = ("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")

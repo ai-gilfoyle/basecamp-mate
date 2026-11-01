@@ -84,6 +84,7 @@ policy. Each does one thing to the configured account and project:
 | unmonitored recorder | reader | records owner input that no behavior handles as `unmonitored`, once per kind of thing (below) |
 | `sync.py reply` | command | answers a recorded comment, chat line, Ping line, to-do comment, thread comment or mention where it was made, then removes the 👀 |
 | `sync.py ask` | command | posts a new chat line @mentioning the owner |
+| `sync.py watch`, `sync.py unwatch` | command | starts or stops watching one chat in any project of the account (kept in `chats.json`, not the config): its listened-to lines after a given line are recorded as `chat-question` (see "Chat watches") |
 | `sync.py answer` | command | answers a check-in question, once per question per day |
 | `sync.py todo create` | command | creates a to-do assigned to the owner, with a description, and tracks it under a key: in the configured decisions project and list, or any project (`--project`), list (`--list`) or card table column (`--card-table --column`, a card) |
 | `sync.py todo track` | command | tracks an existing to-do (in any project, `--project`) under a key, without relaying its old comments |
@@ -112,9 +113,9 @@ agent's side of each is in [`prompts/base.md`](prompts/base.md).
 The timer runs `run.sh` every 30 seconds, and each behavior's step runs when it is due
 (`timer.json` keeps when each last ran): `notifications` and `inbox-delivery` every run;
 `card-mirror`, `release-announcements`, `checkin-answering` and `assigned-todos` every 5
-minutes; `security-advisories` hourly; `backup` daily; and `chat-inbox`, `decision-todos`, `reports` and
+minutes; `security-advisories` hourly; `backup` daily; and `chat-inbox`, `chat-watch`, `decision-todos`, `reports` and
 `pings` hourly, as the repair sweep behind `notifications`, which reads their surfaces as soon as something changes.
-Without `notifications` (no `profile`, or `"notifications": false`) those four run every
+Without `notifications` (no `profile`, or `"notifications": false`) those five run every
 5 minutes instead. `sync.py --all` runs every step at once.
 
 | Behavior | Config keys | `init` flag | Timer step | Agent side |
@@ -122,6 +123,7 @@ Without `notifications` (no `profile`, or `"notifications": false`) those four r
 | `notifications` | `profile` (off with `"notifications": false`), `mentions` | default (`--mentions-anywhere`: @mentions and followed threads account-wide) | every run: the notification and boost readers, then the reader for each thread that changed; mark read | records arrive within about 30 seconds; an `unmonitored` record becomes a decision to-do |
 | `card-mirror` | `tables`, `repos` (off with `"cards": false`), `assign_captain` | default (`--no-cards` to leave off; `--no-assign-captain` never assigns the owner) | mirror the backlog; card comment and 👍 readers (5 min) | relay comments and approvals; `reply`; with `"assign_captain": false`, send each decision to the main home instead |
 | `chat-inbox` | `chats` | default; `--every-line` | chat reader (hourly sweep) | `reply` to each line |
+| `chat-watch` | none: the watches in `chats.json` (`sync.py watch`) | none | chat reader for each watched chat, in its own project; ends a watch whose `--until` day has passed (hourly sweep) | `watch` after asking a question in a chat outside the project; `reply` to each line; `unwatch` once answered |
 | `chat-asks` | `ask_chat` | by hand | none | `ask` |
 | `release-announcements` | `releases` | default, when the dock has one message board | post one message per new GitHub release | none |
 | `security-advisories` | `advisories` | `--advisories <owner/name>` (repeatable) | record each new GitHub security advisory and each new or reopened open Dependabot alert once (hourly) | route an advisory to the repo's owner, with severity, fix and disclosure decisions going to the captain; file a to-do for a Dependabot alert and route its fix the same day |
@@ -332,7 +334,7 @@ own:
 
 | Notification | Reader run |
 | --- | --- |
-| a project chat in `chats` has a new line | the chat reader, for that chat; an @mention of the agent there, or a Campfire reply to one of its lines (which carries no mention), is recorded even without `?` |
+| a project chat in `chats`, or a chat watched with `sync.py watch` (any project of the account), has a new line | the chat reader, for that chat; an @mention of the agent there, or a Campfire reply to one of its lines (which carries no mention), is recorded even without `?` |
 | a Ping with an owner in it (with `pings` on) | the Ping reader, for that Ping |
 | a comment or @mention on a mirrored card | that card's comment and 👍 readers, also for a card whose task has left the backlog (the mirror itself leaves such a card as it is) |
 | a comment or @mention on an open tracked to-do (a decision to-do or a request) | that to-do's comment reader |
@@ -378,7 +380,7 @@ readers' own cursors make that harmless. A failed mark is retried next run.
 
 **Scope.** Items in other projects are another home's: they are never read, acted on or
 marked read here, except a Ping (with `pings` on), a to-do request with `"scope":
-"account"`, and, with `"mentions": {"scope": "account"}`, an @mention of the agent or a
+"account"`, a line in a chat watched with `sync.py watch` (see "Chat watches"), and, with `"mentions": {"scope": "account"}`, an @mention of the agent or a
 comment on a thread it follows. Basecamp's own items (`BoostReport`, `Bulletin`,
 `Onboarding`) are ignored.
 
@@ -394,7 +396,8 @@ a blocked sender gets the automatic reply there, the 👀 and the owner's boosts
 replies in that thread are read there, `sync.py reply --recording <id>` answers in that
 project, and a notification handled this way is marked read. A chat line in another
 project's chat that does not @mention the agent is still another home's and is left alone
-(a Campfire reply to the agent's line there, which carries no mention, included). It needs
+(a Campfire reply to the agent's line there, which carries no mention, included), unless
+the agent watches that chat (see "Chat watches"). It needs
 notifications (a `profile`). The default, `{}` or `"scope": "project"`, or no `mentions` key,
 is unchanged: only the configured project's. Like account-wide to-do requests, run it in
 **one home per Basecamp login** (the main home); `basecamp-mate doctor` flags two homes on
@@ -407,8 +410,8 @@ came back) is seeded the same way, since its thread was read then. A dry run rea
 records, boosts, saves and marks nothing.
 
 **The repair sweep.** Notifications cannot see edits, card or to-do moves, or a thread the
-login stopped following, so the readers they take over still run on the timer: the chat,
-decision to-do, report and Ping readers hourly, and the `assigned-todos` sweep (new
+login stopped following, so the readers they take over still run on the timer: the chat
+(configured and watched), decision to-do, report and Ping readers hourly, and the `assigned-todos` sweep (new
 assignments, every open request's comments, boosts, edits and closing) every 5 minutes.
 
 ### Unmonitored input
@@ -567,11 +570,11 @@ one that signs in as the owner, nothing is read: the assignments would be the ow
 ## Safety bounds
 
 - Only the configured account, project, card tables, chats, check-ins, to-do set and
-  message board are touched, and, with `pings` on, the Pings the acting login is in with
+  message board are touched, and the chats the agent watches with `sync.py watch`, and, with `pings` on, the Pings the acting login is in with
   the owner; with `assigned_todos` on, the project's to-dos assigned to the acting login are
   read and acknowledged with a 👀 (with `"scope": "account"`, those in any project of the
   account, and the comments and boosts on them). Notifications and boosts are read for the
-  whole account, but only this project's items (and those Pings and requests) are acted on;
+  whole account, but only this project's items (and those Pings, requests and watched chats) are acted on;
   in the project (with `"mentions": {"scope": "account"}`, any project of the account), any
   thread the acting login follows or is @mentioned in is read for the owner's comments, and
   `reply` answers there. Their only writes are the readers' 👀/👍
@@ -647,6 +650,33 @@ one that signs in as the owner, nothing is read: the assignments would be the ow
   failure rules as a card reply. A chat configured as `{"chat": <id>, "every_line": true}`
   relays every line the owner posts there, not only mention or `?` lines; each goes
   through the same record, cursor and 👀 rules.
+- Chat watches: `sync.py watch --home <home> --config <config.json> --chat <chat URL>
+  [--after-line <line id>] [--every-line] [--until YYYY-MM-DD]` watches one chat in any
+  project of the account, so a plain answer there reaches the agent without an @mention.
+  Use it after the agent asks a question in a chat outside the project. The watch is kept
+  in `chats.json` (the chat's `bucket`, its cursor, and `watch`: `every_line`, `until`,
+  `since`), not in the config, so no config edit or restart is needed. The command reads
+  the chat's lines once (which proves the login can read it) and starts the cursor at
+  `--after-line`, else at the line the URL names (`.../chats/<chat>@<line>`), else at the
+  newest line, so the agent's own question and older lines are never relayed; it also
+  takes the boost counts there now. From then on the `chat-watch` behavior's sweep and
+  notifications read it with the chat reader, in that chat's project: a listened-to line
+  with `?`, an @mention of the agent, or one a `Mention` notification marks as addressed
+  (a Campfire reply to the agent's line) is a `chat-question`, or, with `--every-line`,
+  every listened-to line is. A record from another project carries `project` (`id`,
+  `name`), the 👀 and the owner's boosts on the agent's lines are read there, and `reply
+  --recording <line id>` answers there. Who is heard is decided as in the project
+  (`project_people` for that project), and a blocked sender's line gets the automatic reply
+  only when it @mentions the agent or a notification marks it addressed. The watch ends
+  with `sync.py unwatch --chat <chat URL>`, or once its `--until` day (in the people's zone)
+  has passed: the sweep then drops it and logs that. The lines recorded stay, so `reply`
+  still answers them. Watching a chat again replaces its options and cursor; a chat in
+  `chats` is refused, since the chat inbox reads it already, as are a URL in another
+  account and an `--until` day already past. Basecamp may report a Campfire reply to the
+  agent's line as a `Mention` or as a `Chat` notification; no recorded example of either
+  shape exists here, so both run the chat reader. A reply that comes as a `Chat`
+  notification without `?` or an @mention is recorded only with `--every-line`. A home
+  that never runs `watch` reads exactly as before.
 - Asking the owner: with `ask_chat` set,
   `sync.py ask --home <home> --config <config.json> --body-file <file>` posts the file's
   Markdown (rendered like a reply) as a new line in that chat as the acting user,
@@ -1086,7 +1116,7 @@ claim, in `~/.local/state/basecamp-mate/runs/`; see "One home per project and lo
 | --- | --- | --- |
 | `map.json` | the script (card mirror) | task/board -> card id, column, assignment, content digest, linked boards, seen comments and boosts, acknowledgement boosts queued and done, questions replied to |
 | `releases.json` | the script | GitHub repo -> when the watch started (`since`), the tags seeded then, and the tags announced (tag -> message id) |
-| `chats.json` | the script | chat id -> line cursor, captured question lines, acknowledgement boosts queued and done, questions replied to (a chat nothing relays holds only the mentions recorded there) |
+| `chats.json` | the script (and `sync.py watch`) | chat id -> line cursor, captured question lines, acknowledgement boosts queued and done, questions replied to (a chat nothing relays holds only the mentions recorded there); for a chat in another project, its `bucket` and `project_name`; for a watched chat, `watch` (`every_line`, `until`, `since`) |
 | `checkins.json` | the script | check-in question id -> dates recorded as due (`recorded`) and dates answered (`answered`) |
 | `inbox.json` | the script | the line cursor of `pending-comments.jsonl` delivered to the inbox, and request ids whose failure was logged |
 | `session-alert.json` | the script | the session alert posted for the current outage (when, its line id, how many notes waited); empty while a session holds the lock |
@@ -1284,7 +1314,17 @@ access list (a blocked stranger answered there, `people` heard everywhere and
 `project_people` only in their project), off by default and with the project scope, a
 malformed setting refused, the configured project's records unchanged, the run claim and
 `doctor`'s check for two homes running it with one login, and the inbox note naming the
-project. The `basecamp`, `gh` and `lavish-axi` CLIs are stubbed, and `init`'s systemd and check
+project; `tests/test_chat_watch.py` covers `sync.py watch` and `unwatch`: a `Chat`
+notification for a watched chat in another project recorded as a `chat-question` carrying
+its project, acknowledged, marked read and noted, and the same line in an unwatched chat
+ignored, a watch read by the sweep without mentions anywhere, the first read starting after
+`--after-line` (or the line the URL names, else the newest line), `--every-line` relaying a
+plain line where a watch without it relays only `?`, @mention and addressed lines, a reply
+that comes as a `Mention` recorded once, the owner's boost on the agent's line there, `reply`
+answering in that chat, `unwatch` stopping reads, a watch past its `--until` day reading
+nothing and ending, refusals (a past day, another account, a configured chat, a URL that is
+no chat), a dry run, a blocked sender answered only when they address the agent, and the
+behavior's cadence. The `basecamp`, `gh` and `lavish-axi` CLIs are stubbed, and `init`'s systemd and check
 registration sit behind a fake; tests make no network calls and touch no real home.
 `tests/test_init.py` also covers removing the retired listener service and `"listen"` key.
 `tests/test_setup.py` covers `setup` (defaults, a project URL, interactive picks, the card
@@ -1316,7 +1356,8 @@ stay in UTC.
 - `question`: the same fields as `comment`, for a comment containing `?`.
 - `chat-question`: `chat` (id), `line` (id), `url`, `text`, `at`; `mention: true` when it
   @mentions the agent (or replies to its line) in a chat nothing else relays; `project`
-  (`id`, `name`) when that chat is in another project (`"mentions": {"scope": "account"}`).
+  (`id`, `name`) when that chat is in another project (`"mentions": {"scope": "account"}`,
+  or a chat watched with `sync.py watch`).
 - `thread-comment`: `bucket`, `parent` (the thread's id), `parent_type` (e.g. `Document`,
   `Kanban::Card`, `Todo`), `title`, `comment` (id), `question`, `url`, `text`, `at`. A
   listened-to person commented on a thread the agent follows that no other reader tracks
