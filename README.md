@@ -660,7 +660,8 @@ one that signs in as the owner, nothing is read: the assignments would be the ow
   `--after-line`, else at the line the URL names (`.../chats/<chat>@<line>`), else at the
   newest line, and keeps that starting line as `watch.after`: no line at or before it is
   ever relayed, even when a late `Mention` notification names it. It also takes the boost
-  counts there now as the baseline, so watching again relays no boost made in between.
+  counts there now and the ids of the boosts already on its lines as the baseline, so no
+  boost made before the watch (or while unwatched) is ever relayed.
   From then on the `chat-watch` behavior's sweep and notifications read it with the chat
   reader, in that chat's project: every listened-to line after the start is a
   `chat-question`, a plain answer without `?` included. A record from another project carries `project` (`id`,
@@ -820,7 +821,8 @@ Two homes whose configs watch the same project with the same Basecamp login woul
 read the same notifications, record the same input, acknowledge it twice and wake two
 agents. The shared state lock cannot stop that, since it is per config, so every timer run
 first claims what its config watches ([`runs.py`](runs.py)): its project and the project
-of each chat its home watches with `sync.py watch`, and,
+of each chat its home watches with `sync.py watch` (read under the shared state lock the
+whole run holds, so a watch started meanwhile waits for the next run), and,
 account-wide, its login's Pings (with `pings`), the to-dos assigned to it anywhere
 (with `"assigned_todos": {"scope": "account"}`) and its @mentions and followed threads
 anywhere (with `"mentions": {"scope": "account"}`). Two claims overlap when they share one of
@@ -1322,7 +1324,8 @@ ignored, a watch read by the sweep without mentions anywhere, the first read sta
 `--after-line` (or the line the URL names, else the newest line), a watch relaying a plain
 line without `?`, a delayed `Mention` of a line at or before the start never relayed (in
 another project and in this one), watching again taking the boosts there now as its
-baseline, a watched chat's project in the run claim, a reply
+baseline (counts and boost ids), a watched chat's project in the run claim and a watch
+started during the claim waiting for the run, a reply
 that comes as a `Mention` recorded once, the owner's boost on the agent's line there, `reply`
 answering in that chat, `unwatch` stopping reads, a watch past its `--until` day reading
 nothing and ending, refusals (a past day, another account, a configured chat, a URL that is

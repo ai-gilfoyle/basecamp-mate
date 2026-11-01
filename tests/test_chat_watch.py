@@ -3,7 +3,8 @@ of the account from a given line on, until `sync.py unwatch` or its "until" day 
 
 Notifications, chat lines and boosts are stubbed; nothing touches the network.
 """
-import io, json, os, sys, time, unittest
+import io, json, os, sys, threading, time, unittest
+from unittest import mock
 from contextlib import redirect_stdout
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -150,6 +151,17 @@ class Watch(Base):
         self.assertEqual(self.pending(), [])
         self.assertEqual(self.chats()["78"]["boost_counts"], {"1": 1})
 
+    def test_a_new_boost_after_the_watch_starts_relays_only_itself_not_the_boosts_before(self):
+        self.stub.lines["78"][0]["boosts_count"] = 1
+        self.stub.boosts["1"] = [boost(60, content="earlier")]
+        self.watch()
+        self.assertEqual(self.chats()["78"]["boost_seen"], [60])
+        self.stub.lines["78"][0]["boosts_count"] = 2
+        self.stub.boosts["1"].append(boost(61, content="ok"))
+        self.stub.my_boosts = [my_boost(61, 1, parent={"id": 78, "type": "Chat::Transcript"}, bucket=OTHER)]
+        self.sync().behaviors["notifications"].run()
+        self.assertEqual([(r["kind"], r["boost"]) for r in self.pending()], [("boost", 61)])
+
     def test_reply_answers_in_the_chat_there(self):
         self.watch()
         self.stub.lines["78"].append(there(2))
@@ -241,6 +253,29 @@ class Claim(Base):
         with redirect_stdout(io.StringIO()):
             self.assertEqual(sync.cli(["--home", self.home, "--config", os.path.join(self.cfgdir, "config.json")],
                                       runner=self.stub), 0)
+
+
+    def test_a_watch_started_while_the_timer_claims_waits_so_the_run_reads_only_what_it_claimed(self):
+        started = []
+        claim = runs.Registry.claim
+
+        def racing(reg, *a, **kw):
+            t = threading.Thread(target=lambda: started.append(self.watch()))
+            t.start()
+            t.join(0.5)
+            self.assertTrue(t.is_alive())
+            self.threads.append(t)
+            return claim(reg, *a, **kw)
+
+        self.threads = []
+        self.stub.lines["78"].append(there(2))
+        with mock.patch.object(runs.Registry, "claim", racing), redirect_stdout(io.StringIO()):
+            code = sync.cli(["--home", self.home, "--config", os.path.join(self.cfgdir, "config.json")], runner=self.stub)
+        self.threads[0].join(5)
+        self.assertEqual((code, started), (0, [0]))
+        [claimed] = runs.Registry().claims()
+        self.assertEqual(claimed["watches"], [f"project {ACCOUNT}/{PROJECT}"])
+        self.assertEqual(self.reads_there(), [f"/buckets/{OTHER}/chats/78/lines.json"])  # the watch command's own read
 
 
 class Behavior(Base):

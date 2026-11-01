@@ -60,6 +60,7 @@ class Tools:
         self.home = os.path.abspath(home)
         self.config_path = os.path.abspath(config_path)
         self.dir = os.path.dirname(self.config_path)
+        self.held = set()
         self.cfg = cfg = json.load(open(config_path))
         self.account, self.project = str(cfg["account"]), str(cfg["project"])
         self.captain = int(cfg["captain"])  # the owner: assignee, and the first person whose word is a decision
@@ -175,14 +176,19 @@ class Tools:
         """Hold an exclusive lock on state file `name` while it is read, changed and saved; a dry run writes no lock file.
 
         locked("sync") is the shared state lock: a timer run, each listener cycle and
-        each command hold it throughout, so two of them never write state at once.
+        each command hold it throughout, so two of them never write state at once. Taking
+        a lock this instance already holds just goes on holding it.
         """
-        if self.dry:
+        if self.dry or name in self.held:
             yield
             return
         with open(self.path(name + ".lock"), "w") as f:
             fcntl.flock(f, fcntl.LOCK_EX)
-            yield
+            self.held.add(name)
+            try:
+                yield
+            finally:
+                self.held.discard(name)
 
     def log(self, msg):
         line = f"{datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')} {msg}"
@@ -1579,7 +1585,8 @@ class Tools:
         is recorded, and no line at or before it ever is, whatever notification names
         it. A record from another project carries `project`, and `reply` answers there.
         `until` (YYYY-MM-DD, in the people's zone) ends the watch once that day has
-        passed. Watching again replaces the watch's options, cursor and boost baseline.
+        passed. Watching again replaces the watch's options, cursor and boost baseline (the
+        boost counts there now, and the ids of the boosts already on its lines).
         A chat in "chats" is refused: the chat inbox reads it already. A dry run reads and
         logs only.
         """
@@ -1609,6 +1616,9 @@ class Tools:
             rec.update(bucket=int(bucket), **({"project_name": name} if name else {}))
         rec["cursor"] = start
         rec["boost_counts"] = {str(rid): count for rid, _, count, _ in boost_items(lines)}  # only boosts after this relay
+        rec["boost_seen"] = sorted(set(rec.get("boost_seen") or []) | {
+            b.get("id") for rid, _, count, _ in boost_items(lines) if count
+            for b in self.bc("api", "get", f"/buckets/{bucket}/recordings/{rid}/boosts.json", project=bucket) or []})
         rec["watch"] = {"after": start, "until": until, "since": now_iso()}
         self.save_json("chats.json", state)
         self.log(f"watch: watching {what}")

@@ -420,9 +420,10 @@ def cli(argv=None, runner=subprocess.run):
     a = ap.parse_args(argv)
     s = Sync(a.home, a.config, dry=a.dry_run, runner=runner, prereleases=a.include_prereleases)
     try:
-        if not s.claim(allow=a.allow_duplicate):
-            return 1
-        s.main(due=not a.all)
+        with s.locked("sync"):
+            if not s.claim(allow=a.allow_duplicate):
+                return 1
+            s.main(due=not a.all)
     except Exception as e:
         s.log(f"FAILED {type(e).__name__}: {e}")
         return 1
