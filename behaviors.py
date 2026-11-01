@@ -950,6 +950,7 @@ class Notifications(Behavior):
         self.anywhere = self.on and (mentions or {}).get("scope") == "account"
         self.others = {}  # every behavior by name, set by configure()
         self.watched = {}  # the chats watched this run (`sync.py watch`): chat id -> its chats.json record
+        self.held = {}  # the chats watched but skipped this run (`watch_held`), left to the home that reads their project
 
     def run(self, items=None):
         """One pass: the changed notifications and new boosts, each thread's reader once, then inbox delivery."""
@@ -974,6 +975,7 @@ class Notifications(Behavior):
         first, first_boosts = "items" not in state, "boosts" not in state  # boosts unread on the first run seed later
         cursors, seen = state.get("items") or {}, set(state.get("boosts") or [])
         self.watched = t.watches() if self.others["chat-watch"].on else {}
+        self.held = {c: r for c, r in t.watches(held=True).items() if str(r.get("bucket") or t.project) in t.watch_held}
         want = {"cards": set(), "chats": {}, "todos": set(), "requests": {}, "checkins": False, "answers": False,
                 "messages": set(), "pings": {}, "mentions": {}, "threads": {}}
         work, old = [], set()  # work: (ref, mine, [group], check), one per changed notification or new boost
@@ -1124,6 +1126,8 @@ class Notifications(Behavior):
             if any(rec.get("todo") == thread for rec in todos.values()) or not t.hears(who, admitted=False):
                 return True, [], None  # a decision to-do's own closing, or not from someone listened to
             return True, [], self.check(what, "Todo", thread, r)
+        if (r.get("section") == "chats" or path == "chats") and self.watching(bucket, thread, self.held):
+            return False, [], None  # a watched chat skipped this run (`watch_held`): the home that reads its project relays it
         if not here:
             keys = {k for k, rec in todos.items() if rec.get("todo") == thread and path in ("todos", "cards")
                     and str(rec.get("bucket")) == bucket and not rec.get("completed") and not rec.get("closed")
@@ -1181,9 +1185,9 @@ class Notifications(Behavior):
         self.thread(want, bucket, thread, anchor, mention, THREADS.get(path), topic(r), stamp(r))
         return True, [f"thread {thread}"], None
 
-    def watching(self, bucket, chat):
-        """True when chat `chat` in `bucket` is watched this run (`sync.py watch`)."""
-        rec = self.watched.get(str(chat))
+    def watching(self, bucket, chat, watched=None):
+        """True when chat `chat` in `bucket` is watched this run (`sync.py watch`), or is in `watched` when given."""
+        rec = (self.watched if watched is None else watched).get(str(chat))
         return rec is not None and str(rec.get("bucket") or self.t.project) == str(bucket)
 
     def reads(self, rec):

@@ -1544,8 +1544,14 @@ class Tools:
         """Record a listened-to person's line `rid` in chat `chat` that @mentions the acting user (or is a Campfire reply
         to one of its lines) when no chat reader relays that chat, once, as a `chat-question` kept in chats.json, so
         `reply` answers it there; queued for a 👀. In another project ("mentions": {"scope": "account"}) the record
-        carries that `project` and chats.json its bucket. Returns True when recorded. A dry run records nothing."""
-        if self.agent() is None or rid in self.load("chats.json", {}).get(str(chat), {}).get("lines", []):
+        carries that `project` and chats.json its bucket. A watched chat's line at or before its watch's starting line, or
+        any line of a watched chat skipped this run (`watch_held`), is never recorded. Returns True when recorded. A dry run
+        records nothing."""
+        known = self.load("chats.json", {}).get(str(chat), {})
+        if self.agent() is None or rid in known.get("lines", []):
+            return False
+        if isinstance(known.get("watch"), dict) and (int(rid) <= known["watch"].get("after", 0)
+                                                     or str(known.get("bucket") or self.project) in self.watch_held):
             return False
         try:
             ln = self.bc("api", "get", f"/buckets/{bucket}/chats/{chat}/lines/{rid}.json", project=bucket) or {}

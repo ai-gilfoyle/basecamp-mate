@@ -295,6 +295,26 @@ class Claim(Base):
         self.assertEqual(self.timer(), 0)
         self.assertEqual((self.pending(), self.stub.marked), ([], []))
 
+    def test_a_delayed_mention_in_a_skipped_chat_is_left_to_the_other_home_with_mentions_anywhere(self):
+        self.stub.lines["78"] = [there(1, who=ACTING, content="when?"), there(10, content=MENTION + " an older answer"),
+                                 there(20, who=ACTING, content="and now?")]
+        self.watch("--after-line", "20")
+        self.other_home()
+        self.cfg(mentions={"scope": "account"})
+        self.stub.calls.clear()
+        self.notify(note(10, "Mention", thread=78, anchor=10, path="chats", bucket=OTHER))
+        self.assertEqual(self.timer(), 0)
+        self.assertEqual((self.pending(), self.stub.marked, self.reads_there()), ([], [], []))
+        self.assertNotIn("lines", self.chats()["78"])
+        self.assertNotIn(f"/buckets/{OTHER}/recordings/10/boosts.json", self.stub.paths("post"))
+
+    def test_read_mention_never_records_a_watched_chats_line_at_or_before_its_start(self):
+        self.stub.lines["78"] = [there(1, who=ACTING, content="when?"), there(10, content=MENTION + " an older answer"),
+                                 there(20, who=ACTING, content="and now?")]
+        self.watch("--after-line", "20")
+        self.assertFalse(self.sync().read_mention(str(OTHER), 78, 10))
+        self.assertEqual((self.pending(), self.chats()["78"].get("lines")), ([], None))
+
     def test_another_login_or_a_stale_claim_does_not_skip_it(self):
         self.watch()
         for kw in ({"profile": "someone-else"}, {"last_run": time.time() - 2 * runs.STALE}):
