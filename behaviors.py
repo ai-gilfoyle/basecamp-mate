@@ -263,15 +263,11 @@ class ChatWatch(Behavior):
         super().__init__(t, cfg)
         self.on = any(isinstance(r, dict) and "watch" in r for r in t.load("chats.json", {}).values())
 
-    def every_line(self, watched=None):
-        """The watched chats that relay every listened-to line."""
-        return {c for c, r in (self.t.watches() if watched is None else watched).items() if r["watch"].get("every_line")}
-
     def run(self, items=None):
         self.t.end_watches()
         watched = self.t.watches()
         if watched:
-            self.t.read_chats(sorted(watched), self.every_line(watched))
+            self.t.read_chats(sorted(watched), set(watched))
 
 
 class ChatAsks(Behavior):
@@ -1046,7 +1042,7 @@ class Notifications(Behavior):
             if t.errors > before:
                 failed.add(group)
         step("cards", lambda: b["card-mirror"].relay(want["cards"]))
-        every_line = b["chat-inbox"].every_line | b["chat-watch"].every_line(self.watched)
+        every_line = b["chat-inbox"].every_line | set(self.watched)
         for chat, addressed in sorted(want["chats"].items()):
             step(f"chat {chat}", lambda c=chat, a=addressed: t.read_chats([c], every_line, a))
         step("todos", lambda: t.read_todo_comments(want["todos"]))

@@ -7,7 +7,8 @@ every timer run claims what it watches here before it reads anything, and refuse
 beside a live claim that overlaps, naming the other home. Two runs of the same config
 never collide here: they share one claim, and the state lock serializes them.
 
-What a config watches (`watches`): its project, and, account-wide, the Pings of its login
+What a config watches (`watches`): its project and the project of each chat its home
+watches with `sync.py watch`, and, account-wide, the Pings of its login
 ("pings"), the to-dos assigned to its login anywhere ("assigned_todos" with "scope":
 "account") and its @mentions and followed threads anywhere ("mentions" with "scope":
 "account"). Two claims overlap when they share one of those with the same login: the same
@@ -37,10 +38,12 @@ def directory():
         os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "basecamp-mate", "runs")
 
 
-def watches(cfg):
-    """What a config watches in Basecamp, as tokens two configs can share."""
+def watches(cfg, buckets=()):
+    """What a config watches in Basecamp, as tokens two configs can share; `buckets` are the projects of the chats its
+    home watches (`sync.py watch`), each claimed like the config's own project."""
     account = str(cfg["account"])
     out = [f"project {account}/{cfg['project']}"]
+    out += sorted({f"project {account}/{b}" for b in buckets} - set(out))
     if cfg.get("pings") not in (None, False):
         out.append(f"pings {account}")
     opts = cfg.get("assigned_todos")
@@ -137,7 +140,7 @@ class Registry:
             fcntl.flock(f, fcntl.LOCK_EX)
             yield
 
-    def claim(self, config, home, cfg, person, allow=False, dry=False):
+    def claim(self, config, home, cfg, person, allow=False, dry=False, buckets=()):
         """Claim `cfg`'s watches for this run: the live overlapping claims of other configs, each with what it shares.
 
         Nothing is claimed when any overlap and `allow` is false; the caller refuses to run.
@@ -146,7 +149,7 @@ class Registry:
         """
         config = os.path.realpath(config)
         mine = {"config": config, "home": os.path.abspath(home), "profile": cfg.get("profile") or "",
-                "person": person if isinstance(person, int) else None, "watches": watches(cfg)}
+                "person": person if isinstance(person, int) else None, "watches": watches(cfg, buckets)}
         with self.locked():
             now = self.now()
             others = []

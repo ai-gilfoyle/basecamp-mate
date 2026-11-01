@@ -126,8 +126,8 @@ where the record was made, through `python3 SYNC/sync.py reply C --recording <id
   to you.
 - `chat-question`: a line the captain posted in chat. With `every_line` on, that is every line, not
   only questions; with `mention: true` it @mentions you (or replies to your line) in a chat
-  you otherwise do not relay. A line from a chat you watch (`sync.py watch`) in another
-  project carries `project`. `reply --recording <line>` answers in the chat.
+  you otherwise do not relay. A chat you watch (`sync.py watch`) relays every line, and a
+  line from a watched chat in another project carries `project`. `reply --recording <line>` answers in the chat.
 - `ping`: a line the captain wrote to you in a Ping (a direct message), outside the project.
   `reply --recording <line>` answers in the Ping. Never answer a Ping with the `basecamp`
   CLI directly.

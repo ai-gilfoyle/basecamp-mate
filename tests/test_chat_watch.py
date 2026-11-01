@@ -3,7 +3,7 @@ of the account from a given line on, until `sync.py unwatch` or its "until" day 
 
 Notifications, chat lines and boosts are stubbed; nothing touches the network.
 """
-import io, json, os, sys, unittest
+import io, json, os, sys, time, unittest
 from contextlib import redirect_stdout
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -11,6 +11,7 @@ from test_sync import ACTING, CAPTAIN, line  # noqa: E402
 from test_tools import boost  # noqa: E402
 from test_notifications import PROJECT, my_boost, note  # noqa: E402
 from test_assigned_todos import AssignBase, STRANGER  # noqa: E402
+import runs  # noqa: E402
 import sync  # noqa: E402
 import tools  # noqa: E402
 
@@ -99,18 +100,26 @@ class Watch(Base):
         self.assertEqual(self.chats()["78"]["cursor"], 3)
         self.assertEqual((self.chats()["78"]["bucket"], self.chats()["78"]["project_name"]), (OTHER, "Rails Migration"))
 
-    def test_every_line_relays_a_plain_line_and_without_it_only_questions_mentions_and_replies(self):
+    def test_a_watch_relays_every_listened_to_line_not_only_questions(self):
         self.watch()
         self.stub.lines["78"] += [there(2, content="Tuesday"), there(3, content="Tuesday?"),
                                   there(4, content=MENTION + " Tuesday"), there(5, content="a reply to your line")]
         self.notified(note(10, "Chat", thread=78, path="chats", section="chats", bucket=OTHER),
                       note(11, "Mention", thread=78, anchor=5, path="chats", bucket=OTHER))
-        self.assertEqual([r["line"] for r in self.pending()], [3, 4, 5])
-        self.watch("--every-line")
-        self.stub.lines["78"].append(there(6, content="Tuesday"))
-        self.notified(note(12, "Chat", thread=78, path="chats", section="chats", bucket=OTHER,
-                           at="2099-01-01T00:00:09Z"))
-        self.assertEqual([r["line"] for r in self.pending()], [3, 4, 5, 6])
+        self.assertEqual([r["line"] for r in self.pending()], [2, 3, 4, 5])
+        self.assertNotIn("every_line", self.chats()["78"]["watch"])
+
+    def test_a_delayed_mention_of_a_line_at_or_before_the_start_is_never_relayed(self):
+        self.cfg(mentions={"scope": "account"})
+        here = f"https://3.basecamp.com/{ACCOUNT}/buckets/{PROJECT}/chats/79"
+        for chat, bucket, url in (("78", OTHER, CHAT), ("79", PROJECT, here)):
+            self.stub.lines[chat] = [there(1, who=ACTING, content="when?"), there(2, content="an older answer"),
+                                     there(3, who=ACTING, content="and now?")]
+            self.watch("--after-line", "3", chat=url)
+            self.notified(note(int(chat), "Mention", thread=int(chat), anchor=2, path="chats", bucket=bucket))
+        self.poll()
+        self.assertEqual(self.pending(), [])
+        self.assertEqual((self.chats()["78"]["watch"]["after"], self.chats()["79"]["watch"]["after"]), (3, 3))
 
     def test_a_reply_that_arrives_as_a_mention_is_recorded_once(self):
         self.cfg(mentions={"scope": "account"})
@@ -129,6 +138,17 @@ class Watch(Base):
         self.sync().behaviors["notifications"].run()
         self.assertEqual([(r["kind"], r["recording"]) for r in self.pending()], [("boost", 1)])
         self.assertIn(f"/buckets/{OTHER}/recordings/1/boosts.json", self.stub.paths())
+
+    def test_watching_again_takes_the_boosts_there_now_as_its_baseline(self):
+        self.watch()
+        self.watch(what="unwatch")
+        self.stub.lines["78"][0]["boosts_count"] = 1
+        self.stub.boosts["1"] = [boost(60, content="ok")]
+        self.watch()
+        self.stub.my_boosts = [my_boost(60, 1, parent={"id": 78, "type": "Chat::Transcript"}, bucket=OTHER)]
+        self.sync().behaviors["notifications"].run()
+        self.assertEqual(self.pending(), [])
+        self.assertEqual(self.chats()["78"]["boost_counts"], {"1": 1})
 
     def test_reply_answers_in_the_chat_there(self):
         self.watch()
@@ -189,7 +209,7 @@ class Access(Base):
     def test_a_blocked_senders_line_gets_the_automatic_reply_only_when_it_addresses_the_agent(self):
         self.cfg(blocked={})
         self.poll()  # starts the clock
-        self.watch("--every-line")
+        self.watch()
         self.stub.lines["78"].append(there(2, who=STRANGER, content="Tuesday"))
         self.poll()
         self.assertEqual((self.pending(), self.stub.chat_posts()), ([], []))
@@ -198,6 +218,29 @@ class Access(Base):
         self.assertEqual(self.pending(), [])
         self.assertEqual(self.stub.chat_posts(), [("78", tools.BLOCKED_REPLY)])
         self.assertEqual(self.stub.projects("api post")[-1], str(OTHER))
+
+
+class Claim(Base):
+    def test_a_watched_chat_claims_its_project_so_a_home_reading_that_project_with_this_login_refuses(self):
+        self.watch()
+        reg = runs.Registry()
+        os.makedirs(reg.dir, exist_ok=True)
+        other = os.path.join(self.tmp, "other.json")
+        cfg = dict(json.load(open(os.path.join(self.cfgdir, "config.json"))), project=OTHER)
+        json.dump(cfg, open(other, "w"))
+        with open(reg.file(other), "w") as f:
+            json.dump({"config": os.path.realpath(other), "home": self.tmp, "profile": cfg.get("profile") or "",
+                       "person": None, "watches": runs.watches(cfg), "pid": None, "last_run": time.time()}, f)
+        self.stub.calls.clear()
+        with redirect_stdout(io.StringIO()):
+            code = sync.cli(["--home", self.home, "--config", os.path.join(self.cfgdir, "config.json")], runner=self.stub)
+        self.assertEqual(code, 1)
+        self.assertIn(f"also watching project {ACCOUNT}/{OTHER}", self.log())
+        self.assertEqual(self.reads_there(), [])
+        self.watch(what="unwatch")
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(sync.cli(["--home", self.home, "--config", os.path.join(self.cfgdir, "config.json")],
+                                      runner=self.stub), 0)
 
 
 class Behavior(Base):

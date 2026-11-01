@@ -317,11 +317,11 @@ that read.
 - After you ask someone a question in a chat outside the project (for example with `reply`
   to their line there), watch that chat so their plain answer reaches you without an
   @mention:
-  `python3 $SYNC/sync.py watch --home <home> --config <home>/data/basecamp-sync/config.json --chat <chat or line URL> --until <YYYY-MM-DD> [--every-line]`.
+  `python3 $SYNC/sync.py watch --home <home> --config <home>/data/basecamp-sync/config.json --chat <chat or line URL> --until <YYYY-MM-DD>`.
   The watch starts after the line the URL names (else the chat's newest line), so your
-  question and older lines are never relayed. Without `--every-line` only lines with `?`,
-  @mentions of you and replies to your line come through; with it, every line of the
-  people the sync listens to. Their lines arrive as `chat-question` records carrying
+  question and older lines are never relayed, even when a late notification names one.
+  Every line of the people the sync listens to comes through, so a plain answer without
+  `?` reaches you. Their lines arrive as `chat-question` records carrying
   `project`; answer with `reply`. Once answered, stop with `sync.py unwatch --chat <URL>`
   (`--until` also ends it). A chat in the config's `chats` needs no watch.
 - To put a question or decision to the owner in chat (only when `ask_chat` is set), post

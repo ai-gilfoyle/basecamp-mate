@@ -651,32 +651,32 @@ one that signs in as the owner, nothing is read: the assignments would be the ow
   relays every line the owner posts there, not only mention or `?` lines; each goes
   through the same record, cursor and 👀 rules.
 - Chat watches: `sync.py watch --home <home> --config <config.json> --chat <chat URL>
-  [--after-line <line id>] [--every-line] [--until YYYY-MM-DD]` watches one chat in any
+  [--after-line <line id>] [--until YYYY-MM-DD]` watches one chat in any
   project of the account, so a plain answer there reaches the agent without an @mention.
   Use it after the agent asks a question in a chat outside the project. The watch is kept
-  in `chats.json` (the chat's `bucket`, its cursor, and `watch`: `every_line`, `until`,
+  in `chats.json` (the chat's `bucket`, its cursor, and `watch`: `after`, `until`,
   `since`), not in the config, so no config edit or restart is needed. The command reads
   the chat's lines once (which proves the login can read it) and starts the cursor at
   `--after-line`, else at the line the URL names (`.../chats/<chat>@<line>`), else at the
-  newest line, so the agent's own question and older lines are never relayed; it also
-  takes the boost counts there now. From then on the `chat-watch` behavior's sweep and
-  notifications read it with the chat reader, in that chat's project: a listened-to line
-  with `?`, an @mention of the agent, or one a `Mention` notification marks as addressed
-  (a Campfire reply to the agent's line) is a `chat-question`, or, with `--every-line`,
-  every listened-to line is. A record from another project carries `project` (`id`,
+  newest line, and keeps that starting line as `watch.after`: no line at or before it is
+  ever relayed, even when a late `Mention` notification names it. It also takes the boost
+  counts there now as the baseline, so watching again relays no boost made in between.
+  From then on the `chat-watch` behavior's sweep and notifications read it with the chat
+  reader, in that chat's project: every listened-to line after the start is a
+  `chat-question`, a plain answer without `?` included. A record from another project carries `project` (`id`,
   `name`), the 👀 and the owner's boosts on the agent's lines are read there, and `reply
   --recording <line id>` answers there. Who is heard is decided as in the project
   (`project_people` for that project), and a blocked sender's line gets the automatic reply
   only when it @mentions the agent or a notification marks it addressed. The watch ends
   with `sync.py unwatch --chat <chat URL>`, or once its `--until` day (in the people's zone)
   has passed: the sweep then drops it and logs that. The lines recorded stay, so `reply`
-  still answers them. Watching a chat again replaces its options and cursor; a chat in
+  still answers them. Watching a chat again replaces its options, cursor and boost baseline; a chat in
   `chats` is refused, since the chat inbox reads it already, as are a URL in another
   account and an `--until` day already past. Basecamp may report a Campfire reply to the
   agent's line as a `Mention` or as a `Chat` notification; no recorded example of either
-  shape exists here, so both run the chat reader. A reply that comes as a `Chat`
-  notification without `?` or an @mention is recorded only with `--every-line`. A home
-  that never runs `watch` reads exactly as before.
+  shape exists here, so both run the chat reader. A watched chat's project is part of the
+  home's run claim (see "One home per project and login"). A home that never runs `watch`
+  reads exactly as before.
 - Asking the owner: with `ask_chat` set,
   `sync.py ask --home <home> --config <config.json> --body-file <file>` posts the file's
   Markdown (rendered like a reply) as a new line in that chat as the acting user,
@@ -819,7 +819,8 @@ one that signs in as the owner, nothing is read: the assignments would be the ow
 Two homes whose configs watch the same project with the same Basecamp login would each
 read the same notifications, record the same input, acknowledge it twice and wake two
 agents. The shared state lock cannot stop that, since it is per config, so every timer run
-first claims what its config watches ([`runs.py`](runs.py)): its project, and,
+first claims what its config watches ([`runs.py`](runs.py)): its project and the project
+of each chat its home watches with `sync.py watch`, and,
 account-wide, its login's Pings (with `pings`), the to-dos assigned to it anywhere
 (with `"assigned_todos": {"scope": "account"}`) and its @mentions and followed threads
 anywhere (with `"mentions": {"scope": "account"}`). Two claims overlap when they share one of
@@ -1116,7 +1117,7 @@ claim, in `~/.local/state/basecamp-mate/runs/`; see "One home per project and lo
 | --- | --- | --- |
 | `map.json` | the script (card mirror) | task/board -> card id, column, assignment, content digest, linked boards, seen comments and boosts, acknowledgement boosts queued and done, questions replied to |
 | `releases.json` | the script | GitHub repo -> when the watch started (`since`), the tags seeded then, and the tags announced (tag -> message id) |
-| `chats.json` | the script (and `sync.py watch`) | chat id -> line cursor, captured question lines, acknowledgement boosts queued and done, questions replied to (a chat nothing relays holds only the mentions recorded there); for a chat in another project, its `bucket` and `project_name`; for a watched chat, `watch` (`every_line`, `until`, `since`) |
+| `chats.json` | the script (and `sync.py watch`) | chat id -> line cursor, captured question lines, acknowledgement boosts queued and done, questions replied to (a chat nothing relays holds only the mentions recorded there); for a chat in another project, its `bucket` and `project_name`; for a watched chat, `watch` (`after`, `until`, `since`) |
 | `checkins.json` | the script | check-in question id -> dates recorded as due (`recorded`) and dates answered (`answered`) |
 | `inbox.json` | the script | the line cursor of `pending-comments.jsonl` delivered to the inbox, and request ids whose failure was logged |
 | `session-alert.json` | the script | the session alert posted for the current outage (when, its line id, how many notes waited); empty while a session holds the lock |
@@ -1318,8 +1319,10 @@ project; `tests/test_chat_watch.py` covers `sync.py watch` and `unwatch`: a `Cha
 notification for a watched chat in another project recorded as a `chat-question` carrying
 its project, acknowledged, marked read and noted, and the same line in an unwatched chat
 ignored, a watch read by the sweep without mentions anywhere, the first read starting after
-`--after-line` (or the line the URL names, else the newest line), `--every-line` relaying a
-plain line where a watch without it relays only `?`, @mention and addressed lines, a reply
+`--after-line` (or the line the URL names, else the newest line), a watch relaying a plain
+line without `?`, a delayed `Mention` of a line at or before the start never relayed (in
+another project and in this one), watching again taking the boosts there now as its
+baseline, a watched chat's project in the run claim, a reply
 that comes as a `Mention` recorded once, the owner's boost on the agent's line there, `reply`
 answering in that chat, `unwatch` stopping reads, a watch past its `--until` day reading
 nothing and ending, refusals (a past day, another account, a configured chat, a URL that is

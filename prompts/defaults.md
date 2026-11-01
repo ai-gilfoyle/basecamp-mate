@@ -126,11 +126,10 @@ alike, and `reply` answers in its own project.
 project does not reach you unless you watch that chat. Right after you ask someone a
 question in such a chat (for example with `reply` to their line there), watch it from your
 question on, with a last day so the watch cannot outlive the question:
-`sync.py watch --chat <the chat's or your line's URL> --until <YYYY-MM-DD>`. Add
-`--every-line` when you expect a short answer without `?` (a busy chat: leave it off, and
-only questions, @mentions of you and replies to your line come through). Their lines then
-arrive as `chat-question` records carrying `project`; answer with `reply`. Once you have
-your answer, run `sync.py unwatch --chat <URL>`.
+`sync.py watch --chat <the chat's or your line's URL> --until <YYYY-MM-DD>`. Every line
+the people you listen to write there after your question then arrives as a `chat-question`
+record carrying `project`, a plain answer without `?` included; answer with `reply`. Once
+you have your answer, run `sync.py unwatch --chat <URL>`.
 
 ## Operators and participants
 

@@ -51,7 +51,7 @@ the same project (or Pings, account-wide to-do requests or account-wide mentions
 Usage: sync.py --home <home> --config <config.json> [--all] [--dry-run] [--include-prereleases] [--allow-duplicate]
        sync.py status      (the runs recorded on this computer; also bin/basecamp-mate status)
        sync.py reply --home <home> --config <config.json> --recording <comment, chat line or Ping line id> --body-file <file> [--again] [--dry-run]
-       sync.py watch --home <home> --config <config.json> --chat <chat URL> [--after-line <line id>] [--every-line] [--until YYYY-MM-DD] [--dry-run]
+       sync.py watch --home <home> --config <config.json> --chat <chat URL> [--after-line <line id>] [--until YYYY-MM-DD] [--dry-run]
        sync.py unwatch --home <home> --config <config.json> --chat <chat URL> [--dry-run]
        sync.py ask --home <home> --config <config.json> --body-file <file> [--dry-run]
        sync.py answer --home <home> --config <config.json> --question <check-in question id> --body-file <file> [--dry-run]
@@ -158,7 +158,9 @@ class Sync(Tools):
         allow = allow or self.cfg.get("allow_duplicate") is True
         me = self.acting_id()
         reg = runs.Registry()
-        others = reg.claim(self.config_path, self.home, self.cfg, me if isinstance(me, int) else None, allow=allow, dry=self.dry)
+        buckets = {str(r.get("bucket") or self.project) for r in self.watches().values()}
+        others = reg.claim(self.config_path, self.home, self.cfg, me if isinstance(me, int) else None, allow=allow, dry=self.dry,
+                           buckets=buckets)
         now, say = reg.now(), print if self.dry else self.log
         homes = sorted(c.get("home") or "?" for c, _ in others)
         with self.locked("sync"):
@@ -319,12 +321,10 @@ def cli(argv=None, runner=subprocess.run):
         if what == "watch":
             ap.add_argument("--after-line", type=int, help="relay only lines after this one (default: the line the URL "
                                                            "names, else the chat's newest line now)")
-            ap.add_argument("--every-line", action="store_true",
-                            help='relay every line, not only questions ("?"), @mentions and replies to the agent')
             ap.add_argument("--until", help="stop watching once this day (YYYY-MM-DD) has passed")
         ap.add_argument("--dry-run", action="store_true")
         a = ap.parse_args(argv[1:])
-        return command(a, what, lambda s: s.watch(a.chat, a.after_line, a.every_line, a.until) if what == "watch"
+        return command(a, what, lambda s: s.watch(a.chat, a.after_line, a.until) if what == "watch"
                        else s.unwatch(a.chat), runner)
     if argv[:1] in (["ask"], ["answer"]):
         what = argv[0]

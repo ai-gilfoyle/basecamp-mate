@@ -684,8 +684,9 @@ class Tools:
         no mention): each is recorded like a question, even when the cursor has passed
         it, unless it already was. A chat whose chats.json record has a "bucket" (a chat
         watched or mentioned in another project of the account) is read there, and its
-        records carry that `project`; a line already recorded is never recorded again. A
-        dry run reads and logs only.
+        records carry that `project`; a line already recorded is never recorded again, and
+        a watched chat never records a line at or before its watch's starting line ("after"),
+        whatever notification names it. A dry run reads and logs only.
         """
         state = self.load("chats.json", {})
         for chat in chats:
@@ -699,8 +700,11 @@ class Tools:
             lines = sorted(lines, key=lambda l: l.get("id", 0))
             first = "cursor" not in rec
             cursor = rec.get("cursor", 0)
+            floor = (rec.get("watch") or {}).get("after", 0)
             for ln in lines:
                 lid = ln.get("id", 0)
+                if lid <= floor:
+                    continue
                 late = lid <= cursor and lid in addressed and lid not in rec.get("lines", []) and not first
                 if lid <= cursor and not late:
                     continue
@@ -1563,7 +1567,7 @@ class Tools:
 
     # --- chat watches: one chat in any project of the account, read from a given line on (`sync.py watch`) ---
 
-    def watch(self, url, after_line=None, every_line=False, until=None):
+    def watch(self, url, after_line=None, until=None):
         """Watch the chat at `url` (any project of the account) from line `after_line` on, until `unwatch` or `until` passes.
 
         The watch lives in chats.json beside the chat's cursor, not in the config: the
@@ -1571,12 +1575,13 @@ class Tools:
         the cursor starts at `after_line`, else at the line the URL names, else at the
         newest line, so neither the agent's own question nor older lines are relayed.
         From then on the chat-watch behavior and notifications read it like a chat in
-        "chats": a listened-to line with "?", an @mention of the agent or a Campfire
-        reply to it is recorded, or, with `every_line`, every listened-to line. A record
-        from another project carries `project`, and `reply` answers there. `until`
-        (YYYY-MM-DD, in the people's zone) ends the watch once that day has passed.
-        Watching again replaces the watch's options and cursor. A chat in "chats" is
-        refused: the chat inbox reads it already. A dry run reads and logs only.
+        "chats" with every line relayed: each listened-to line after the starting line
+        is recorded, and no line at or before it ever is, whatever notification names
+        it. A record from another project carries `project`, and `reply` answers there.
+        `until` (YYYY-MM-DD, in the people's zone) ends the watch once that day has
+        passed. Watching again replaces the watch's options, cursor and boost baseline.
+        A chat in "chats" is refused: the chat inbox reads it already. A dry run reads and
+        logs only.
         """
         bucket, chat, line = parse_chat_url(url, self.account)
         if chat in configured_chats(self.cfg):
@@ -1594,7 +1599,7 @@ class Tools:
         here = bucket == str(self.project)
         name = next(filter(None, ((ln.get("bucket") or {}).get("name") for ln in lines)), None)
         what = (f"chat {chat}" + ("" if here else f" in project {name + ' ' if name else ''}({bucket})")
-                + f" from line {start}" + (", every line" if every_line else "") + (f", until {until}" if until else ""))
+                + f" from line {start}" + (f", until {until}" if until else ""))
         if self.dry:
             self.log(f"dry watch: would watch {what}")
             return False
@@ -1603,9 +1608,8 @@ class Tools:
         if not here:
             rec.update(bucket=int(bucket), **({"project_name": name} if name else {}))
         rec["cursor"] = start
-        if "boost_counts" not in rec:  # the boosts there now, so the first read relays only the owner's boosts after this
-            rec["boost_counts"] = {str(rid): count for rid, _, count, _ in boost_items(lines)}
-        rec["watch"] = {"every_line": bool(every_line), "until": until, "since": now_iso()}
+        rec["boost_counts"] = {str(rid): count for rid, _, count, _ in boost_items(lines)}  # only boosts after this relay
+        rec["watch"] = {"after": start, "until": until, "since": now_iso()}
         self.save_json("chats.json", state)
         self.log(f"watch: watching {what}")
         return True
