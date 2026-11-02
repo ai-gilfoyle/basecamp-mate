@@ -5,16 +5,16 @@ otherwise. It holds the policy: which readers run on the timer and how often, wh
 the card mirror shows, when a release is announced. The timer runs every 30 seconds;
 each behavior's step runs when its `every` has passed: notifications and inbox
 delivery every run, the card mirror, release announcements and check-ins every 5
-minutes (and the to-do request sweep), and the security-advisory reader and the readers
-notifications take over hourly, as the repair sweep. Some
+minutes (and the to-do request sweep), and the security-advisory reader, the timesheet and
+the readers notifications take over hourly, as the repair sweep. Some
 behaviors have no timer step at all and are carried out by the agent with the tools
 (chat asks); the agent's side of every behavior is in prompts/base.md.
 
 Behaviors never call a CLI themselves; every Basecamp, GitHub and backlog read or
 write goes through a Tools method.
 """
-import hashlib, html, json, os, re
-from datetime import datetime, timezone
+import hashlib, html, json, math, os, re
+from datetime import datetime, timedelta, timezone
 
 from tools import AUTHORITY, THREADS, history, now_iso, parse_reading, recording_type
 
@@ -833,6 +833,206 @@ class Backup(Behavior):
         t.log(f"backup to folder {self.vault}: {sent} uploaded, {same} unchanged" + (" (dry run)" if t.dry else ""))
 
 
+class Timesheet(Behavior):
+    """Post the agent's active time on each piece of work to the Basecamp timesheet of its to-do or card, once per day.
+
+    "timesheet": {} turns it on ({"gap_minutes": 5, "tool_minutes": 60} are the defaults). The
+    agent says what it works on with `sync.py timesheet start --key <key> [--on <to-do or card>]
+    --workdir <dir>` and `timesheet stop --key <key>` (timesheet.json "items"). Active time is
+    read from the Claude Code transcripts of each source, only between its start and stop: a gap
+    of at most "gap_minutes" between two events of a transcript is active, and so is a wait on a
+    tool call the agent made of at most "tool_minutes"; the spans of all a key's transcripts are
+    merged (time is never counted twice), split by the people's local day and rounded to the
+    nearest quarter hour. Hourly, each finished day (before today, in the people's zone) with a
+    quarter hour or more is posted as one entry on the key's to-do or card, once: the "posted"
+    ledger keeps each key's posted days, so a re-run, a retry or a restart never posts a day
+    twice. A key with no to-do or card is skipped and reported once (a `timesheet-unmapped`
+    record); its days post once it has one. A project whose timesheet refuses an entry (forbidden,
+    not found, invalid; or any other failure on FAILURES runs) is reported once (a
+    `timesheet-refused` record) and not tried again until `sync.py timesheet retry`. Nothing is
+    posted without a profile that is not the owner's. A dry run, and `sync.py timesheet post
+    --dry-run`, only prints what it would post.
+    """
+    name, keys, every = "timesheet", ("timesheet",), SWEEP
+
+    def __init__(self, t, cfg):
+        super().__init__(t, cfg)
+        ts = cfg.get("timesheet")
+        if ts is None or ts is False:
+            return
+        if not isinstance(ts, dict) or set(ts) - {"gap_minutes", "tool_minutes"} or not all(
+                isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0 for v in ts.values()):
+            raise ValueError('config "timesheet" must be {} or {"gap_minutes": <minutes>, "tool_minutes": <minutes>}')
+        self.on = True
+        self.gap = timedelta(minutes=ts.get("gap_minutes", 5))
+        self.tool = timedelta(minutes=ts.get("tool_minutes", 60))
+
+    def hours(self, item, zone, now):
+        """{local day (YYYY-MM-DD): hours, in quarters} of the active time in `item`'s sources; days under 1/8 h left out."""
+        spans = []
+        for src in item.get("sources") or []:
+            lo = datetime.fromisoformat(src["from"].replace("Z", "+00:00"))
+            hi = datetime.fromisoformat(src["to"].replace("Z", "+00:00")) if src.get("to") else now
+            for events in self.t.transcript_events(src["path"], lo).values():
+                for a, b in active_spans(events, self.gap, self.tool):
+                    a, b = max(a, lo), min(b, hi)
+                    if a < b:
+                        spans.append((a, b))
+        days = {}
+        for a, b in merged(spans):
+            for day, dur in local_days(a, b, zone):
+                days[day] = days.get(day, timedelta(0)) + dur
+        out = {d.isoformat(): quarters(dur) for d, dur in sorted(days.items())}
+        return {d: h for d, h in out.items() if h > 0}
+
+    def target(self, key, item):
+        """Where `key`'s entries go: (bucket, recording id, URL), from its "on", else a to-do tracked under the key
+        (todos.json), else its mirrored card (map.json); None when it has none."""
+        t = self.t
+        on = item.get("on")
+        if on:
+            return str(on["bucket"]), on["recording"], on.get("url")
+        rec = t.load("todos.json", {}).get(key)
+        if rec and rec.get("todo"):
+            return str(rec.get("bucket") or t.project), rec["todo"], rec.get("url")
+        rec = t.load("map.json", {}).get(key)
+        if rec and rec.get("card"):
+            return (str(t.project), rec["card"],
+                    f"https://3.basecamp.com/{t.account}/buckets/{t.project}/card_tables/cards/{rec['card']}")
+        return None
+
+    def run(self, items=None):
+        t = self.t
+        state = t.load("timesheet.json", {})
+        tracked = state.get("items") or {}
+        if not tracked:
+            return
+        zone = t.zone()
+        now = datetime.now(timezone.utc)
+        today = now.astimezone(zone).date().isoformat()
+        posted, refused = state.setdefault("posted", {}), state.setdefault("refused", {})
+        unmapped, failures = state.setdefault("unmapped", {}), state.setdefault("failures", {})
+        dry, planned, checked, failed = "dry " if t.dry else "", 0, False, set()  # failed: projects failing this run
+
+        def save():
+            if not t.dry:
+                t.save_json("timesheet.json", state)
+
+        for key, item in sorted(tracked.items()):
+            if item.get("settled"):
+                continue
+            days = self.hours(item, zone, now)
+            due = {d: h for d, h in days.items() if d < today and d not in (posted.get(key) or {})}
+            sources = item.get("sources") or []
+            stopped = bool(sources) and all(s.get("to") and local_day(s["to"], zone) < today for s in sources)
+            if not due:
+                if stopped:
+                    item["settled"] = True  # stopped before today, every day with time posted: never read again
+                    save()
+                continue
+            target = self.target(key, item)
+            if target is None:
+                total = sum(due.values())
+                if t.dry or key not in unmapped:  # logged and recorded once; a dry run always says it
+                    t.log(f"{dry}timesheet: {key} has no to-do or card, so {total:g} h on {', '.join(sorted(due))} "
+                          f"is not posted; sync.py timesheet start --key {key} --on <to-do or card URL> gives it one")
+                if not t.dry and key not in unmapped:
+                    unmapped[key] = now_iso()
+                    t.record({"kind": "timesheet-unmapped", "key": key, "days": due, "hours": total, "at": unmapped[key]})
+                    save()
+                continue
+            if unmapped.pop(key, None):
+                save()
+            bucket, rid, url = target
+            for day, h in sorted(due.items()):
+                if bucket in refused:  # reported once when it refused; a dry run says so for each entry
+                    if t.dry:
+                        t.log(f"dry timesheet: {key} {h:g} h on {day} is not posted: project {bucket}'s timesheet refused "
+                              f"entries ({refused[bucket].get('error')}); sync.py timesheet retry --project {bucket} tries again")
+                    continue
+                if bucket in failed:
+                    continue
+                planned += 1
+                if t.dry:
+                    t.log(f"dry timesheet: post {h:g} h on {day} for {key} on {url or rid}")
+                    continue
+                if not checked:
+                    try:
+                        if t.refused("timesheet", "owner"):
+                            return
+                    except RuntimeError as e:
+                        t.log(f"timesheet: nothing posted, retrying next run: {e}")
+                        return
+                    checked = True
+                try:
+                    entry = t.timesheet_entry(bucket, rid, day, h, f"Active agent time: {key}")
+                except Exception as e:
+                    code = getattr(e, "code", None)
+                    failed.add(bucket)  # the project's other entries wait for the next run
+                    failures[bucket] = failures.get(bucket, 0) + 1
+                    if code in REFUSED or failures[bucket] >= FAILURES:
+                        refused[bucket] = {"at": now_iso(), "error": str(e), "code": code, "key": key, "date": day}
+                        failures.pop(bucket, None)
+                        t.log(f"FAILED timesheet: project {bucket}'s timesheet refused {key}'s {h:g} h on {day} "
+                              f"({type(e).__name__}: {e}); its entries wait for sync.py timesheet retry --project {bucket}")
+                        t.record({"kind": "timesheet-refused", "bucket": int(bucket), "key": key, "date": day, "hours": h,
+                                  "url": url, "error": str(e), "code": code, "at": refused[bucket]["at"]})
+                    else:
+                        t.log(f"FAILED timesheet: {key} {h:g} h on {day}, retrying next run: {type(e).__name__}: {e}")
+                    save()
+                    continue
+                failures.pop(bucket, None)
+                posted.setdefault(key, {})[day] = {"hours": h, "entry": entry.get("id"), "url": entry.get("app_url"),
+                                                   "at": now_iso()}
+                t.log(f"timesheet: posted {h:g} h on {day} for {key} on {url or rid}")
+                if stopped and all(d in posted[key] for d in due):
+                    item["settled"] = True
+                save()
+        if t.dry and not planned:
+            t.log("dry timesheet: nothing to post")
+
+
+REFUSED = ("forbidden", "not_found", "validation")  # basecamp CLI error codes: the project's timesheet refuses the entry
+FAILURES = 3  # runs in a row an entry of a project fails for any other reason before that project counts as refused
+
+
+def active_spans(events, gap, tool):
+    """The active spans of one transcript's sorted (time, waits on a tool call) events: each gap to the next event of at
+    most `gap`, or of at most `tool` while waiting on a tool call."""
+    return [(a, b) for (a, waits), (b, _) in zip(events, events[1:]) if timedelta(0) < b - a <= (tool if waits else gap)]
+
+
+def merged(spans):
+    """`spans` with overlapping ones joined, in order, so no time counts twice."""
+    out = []
+    for a, b in sorted(spans):
+        if out and a <= out[-1][1]:
+            out[-1] = (out[-1][0], max(out[-1][1], b))
+        else:
+            out.append((a, b))
+    return out
+
+
+def local_days(a, b, zone):
+    """(local date, duration) of the span from `a` to `b`, cut at each midnight in `zone`."""
+    while a < b:
+        day = a.astimezone(zone).date()
+        midnight = datetime.combine(day + timedelta(days=1), datetime.min.time(), zone).astimezone(timezone.utc)
+        end = min(b, midnight)
+        yield day, end - a
+        a = end
+
+
+def local_day(at, zone):
+    """The day (YYYY-MM-DD) in `zone` of ISO time `at`."""
+    return datetime.fromisoformat(at.replace("Z", "+00:00")).astimezone(zone).date().isoformat()
+
+
+def quarters(dur):
+    """A duration in hours, rounded to the nearest quarter hour (an eighth rounds up)."""
+    return math.floor(dur.total_seconds() / 900 + 0.5) / 4
+
+
 # The files a backup uploads: the config, the JSON and JSONL state beside it and the home's workflow defaults
 # (defaults.md); never a lock, a .tmp, sync.log, a hand copy (config.json.bak-...) or backup.json itself, which changes
 # with every backup.
@@ -1298,10 +1498,10 @@ def stamp(r):
 
 
 # The timer runs the "on" behaviors that are due in this order: blocked replies' clock, then notifications, so the
-# owner's input is not held up by the card mirror; inbox delivery after every reader, then the session alert, which
-# watches what it delivered.
+# owner's input is not held up by the card mirror; inbox delivery after every reader and the timesheet (whose reports
+# it delivers the same run), then the session alert, which watches what it delivered.
 ALL = (BlockedReplies, Notifications, CardMirror, ChatInbox, ChatWatch, ChatAsks, ReleaseAnnouncements, SecurityAdvisories, CheckinAnswering, DecisionTodos,
-       AssignedTodos, AssignedCards, Reports, Pings, InboxDelivery, SessionAlert, Backup)
+       AssignedTodos, AssignedCards, Reports, Pings, Timesheet, InboxDelivery, SessionAlert, Backup)
 # The readers notifications take over: with notifications on they run as the hourly repair sweep.
 # assigned-todos keeps its 5-minute sweep: a request's edits and the owner's boosts on it reach no notification.
 SWEPT = ("chat-inbox", "chat-watch", "decision-todos", "reports", "pings")
@@ -1523,6 +1723,21 @@ def inbox_note(rec, account, project):
                 "reported once")
         facts = ["the login needs admin or security-manager access to the repository, or the repo should leave the "
                  "advisories config"]
+        url = rec.get("url")
+    elif kind == "timesheet-unmapped":
+        rid = f"{key}-{rec.get('at')}"
+        what = (f"Timesheet: your active time on {key} ({rec.get('hours'):g} h on "
+                f"{', '.join(sorted(rec.get('days') or {}))}) is not posted: no to-do or card is named for it")
+        facts = ["reported once; its days post once it has a to-do or card"]
+        cmds = [f"sync.py timesheet start --key {key} --on <to-do or card URL> --workdir <its workdir>"]
+        url = None
+    elif kind == "timesheet-refused":
+        rid = f"{rec.get('bucket')}-{rec.get('at')}"
+        what = (f"Timesheet: project {rec.get('bucket')} refused your {rec.get('hours'):g} h on {rec.get('date')} for "
+                f"{key} ({rec.get('error')})")
+        facts = ["timesheet tracking may be off in that project, or your login may not log time there",
+                 "reported once; nothing in that project is posted until it is retried"]
+        cmds = [f"sync.py timesheet retry --project {rec.get('bucket')} (once it is fixed)"]
         url = rec.get("url")
     else:
         rid = hashlib.sha256(json.dumps(rec, sort_keys=True).encode()).hexdigest()[:16]

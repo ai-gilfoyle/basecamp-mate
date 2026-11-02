@@ -34,7 +34,7 @@ post-message) posts nothing when no profile is set, or when the profile signs in
 the owner, and `--dry-run` only logs. All state lives in the directory holding the
 config.
 """
-import base64, contextlib, csv, fcntl, hashlib, html, json, os, re, subprocess, time, tomllib
+import base64, contextlib, csv, fcntl, glob, hashlib, html, json, os, re, subprocess, time, tomllib
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -2402,6 +2402,129 @@ class Tools:
         self.log(f"post-message: message {m.get('id')} {m.get('app_url') or ''}".rstrip())
         return True
 
+    # --- timesheet: the work the agent counts its active time on (timesheet.json) ---
+
+    def timesheet_start(self, key, on=None, project=None, workdirs=(), transcripts=()):
+        """Count the agent's active time on `key` from now, in the Claude Code transcripts of `workdirs` and `transcripts`.
+
+        `on` (a to-do's or card's URL or id, in `project`, default the URL's, else the
+        configured project) is the recording its timesheet entries go on; it is read once to
+        check it is a to-do or a card. Without it, `key` is looked up when entries are posted:
+        a to-do tracked under it (todos.json), else its mirrored card (map.json). A workdir is
+        the directory the work's Claude Code session runs in; its transcripts are in
+        CLAUDE_CONFIG_DIR (default ~/.claude)/projects/<the path with each character that is
+        not a letter or digit as ->. A transcript path is one .jsonl file or a directory of
+        them. A repeat for a source already counted adds nothing; a new one, or a stopped one,
+        starts counting from now. Writes nothing to Basecamp.
+        """
+        sources = [os.path.abspath(p) for p in transcripts]
+        for w in workdirs:
+            sources += claude_transcript_dirs(w)
+        if not str(key).strip():
+            raise ValueError("a timesheet key is needed")
+        if not sources:
+            raise ValueError("give --workdir or --transcripts: where the work's Claude Code transcripts are")
+        target = None
+        if on is not None:
+            bucket, rid = parse_recording(on, self.account, project or self.project)
+            rec = self.recording(rid, bucket)
+            if rec.get("type") not in ("Todo", "Kanban::Card"):
+                raise ValueError(f"{on!r} is a {rec.get('type') or 'recording'}, not a to-do or card")
+            target = {"bucket": int(bucket), "recording": rid, "type": rec["type"],
+                      "title": rec.get("title") or rec.get("content"), "url": rec.get("app_url")}
+        if self.dry:
+            self.log(f"dry timesheet start {key}: " + ", ".join(sorted(set(sources)))
+                     + (f" on {target['url'] or target['recording']}" if target else ""))
+            return False
+        with self.locked("timesheet.json"):
+            state = self.load("timesheet.json", {})
+            item = state.setdefault("items", {}).setdefault(key, {"sources": []})
+            if target:
+                item["on"] = target
+            item.pop("settled", None)
+            added = []
+            for src in dict.fromkeys(sources):
+                if not any(s["path"] == src and not s.get("to") for s in item["sources"]):
+                    item["sources"].append({"path": src, "from": now_iso()})
+                    added.append(src)
+            self.save_json("timesheet.json", state)
+        self.log(f"timesheet start {key}: " + (", ".join(added) if added else "already counting")
+                 + (f" on {target['url'] or target['recording']}" if target else ""))
+        return True
+
+    def timesheet_stop(self, key):
+        """Stop counting the agent's active time on `key`: each source counted ends now. Writes nothing to Basecamp."""
+        with self.locked("timesheet.json"):
+            state = self.load("timesheet.json", {})
+            item = (state.get("items") or {}).get(key)
+            if item is None:
+                raise ValueError(f"no timesheet key {key!r} in timesheet.json")
+            open_ = [s for s in item["sources"] if not s.get("to")]
+            if self.dry:
+                self.log(f"dry timesheet stop {key}: {len(open_)} source(s)")
+                return False
+            for s in open_:
+                s["to"] = now_iso()
+            self.save_json("timesheet.json", state)
+        self.log(f"timesheet stop {key}: {len(open_)} source(s) stopped")
+        return True
+
+    def timesheet_retry(self, project):
+        """Forget that project `project`'s timesheet refused entries, so the next post tries its entries again."""
+        with self.locked("timesheet.json"):
+            state = self.load("timesheet.json", {})
+            if str(project) not in (state.get("refused") or {}):
+                raise ValueError(f"project {project} has no refused timesheet entries in timesheet.json")
+            if self.dry:
+                self.log(f"dry timesheet retry: project {project}")
+                return False
+            del state["refused"][str(project)]
+            (state.get("failures") or {}).pop(str(project), None)
+            self.save_json("timesheet.json", state)
+        self.log(f"timesheet retry: project {project}'s entries are posted again from the next run")
+        return True
+
+    def timesheet_entry(self, bucket, recording, date, hours, description):
+        """Post one timesheet entry (`hours` on day `date`, YYYY-MM-DD) on to-do or card `recording` in `bucket`."""
+        body = {"date": date, "hours": f"{hours:g}", "description": description}
+        return self.bc("api", "post", f"/projects/{bucket}/recordings/{recording}/timesheet/entries.json",
+                       "-d", json.dumps(body), project=bucket) or {}
+
+    def transcript_events(self, path, since):
+        """The events of each Claude Code transcript at `path` (one .jsonl file, or every one under a directory) changed
+        at or after `since`: {session file name: [(time, waits on a tool call), ...] sorted}. A missing path has none.
+
+        Each line with a "timestamp" is an event; an assistant line that calls a tool waits on it until the next event.
+        A session is keyed by its file name, so one seen under two paths (a symlinked home) counts once.
+        """
+        if os.path.isdir(path):
+            files = sorted(glob.glob(os.path.join(path, "**", "*.jsonl"), recursive=True))
+        else:
+            files = [path] if os.path.isfile(path) else []
+        out = {}
+        for f in files:
+            try:
+                if datetime.fromtimestamp(os.path.getmtime(f), timezone.utc) < since:
+                    continue
+                events = []
+                with open(f, errors="replace") as fh:
+                    for ln in fh:
+                        try:
+                            o = json.loads(ln)
+                            at = datetime.fromisoformat(str(o.get("timestamp") or "").replace("Z", "+00:00"))
+                        except (ValueError, AttributeError):
+                            continue
+                        if at.tzinfo is None:
+                            at = at.replace(tzinfo=timezone.utc)
+                        content = (o.get("message") or {}).get("content") if isinstance(o.get("message"), dict) else None
+                        tool = o.get("type") == "assistant" and isinstance(content, list) and any(
+                            isinstance(c, dict) and c.get("type") == "tool_use" for c in content)
+                        events.append((at, tool))
+            except OSError:
+                continue
+            out.setdefault(os.path.basename(f), []).extend(events)
+        return {k: sorted(v) for k, v in out.items()}
+
     def unmonitored_handle(self, key, decision):
         """Mark unmonitored key `key` handled with the owner's `decision`; it stays quiet until forgotten."""
         state = self.load("unmonitored.json", {})
@@ -2500,6 +2623,28 @@ def parse_chat_url(url, account):
     if m.group(1) != str(account):
         raise ValueError(f"{url!r} is in account {m.group(1)}, not this home's account {account}")
     return m.group(2), m.group(3), int(m.group(4)) if m.group(4) else None
+
+
+def parse_recording(on, account, project):
+    """(bucket, recording id) of a to-do's or card's Basecamp URL in `account`, or of a bare id in `project`."""
+    s = str(on).strip()
+    if s.isdigit():
+        return str(project), int(s)
+    m = re.search(r"basecamp(?:api)?\.com/(\d+)/(?:buckets|projects)/(\d+)/(?:[\w/]+/)?(\d+)(?=$|[/?#.])", s)
+    if not m:
+        raise ValueError(f"{on!r} is not a to-do or card id or URL "
+                         "(https://3.basecamp.com/<account>/buckets/<project>/todos/<id>, or .../card_tables/cards/<id>)")
+    if m.group(1) != str(account):
+        raise ValueError(f"{on!r} is in account {m.group(1)}, not this home's account {account}")
+    return m.group(2), int(m.group(3))
+
+
+def claude_transcript_dirs(workdir):
+    """The directories Claude Code keeps the transcripts of sessions run in `workdir` in: one per spelling of the path
+    (as given and with symlinks resolved), each under CLAUDE_CONFIG_DIR (default ~/.claude)/projects/."""
+    root = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude"), "projects")
+    paths = dict.fromkeys((os.path.abspath(workdir), os.path.realpath(workdir)))
+    return [os.path.join(root, re.sub(r"[^A-Za-z0-9]", "-", p)) for p in paths]
 
 
 def watch_until(until):
