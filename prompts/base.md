@@ -126,7 +126,8 @@ where the record was made, through `python3 SYNC/sync.py reply C --recording <id
   to you.
 - `chat-question`: a line the captain posted in chat. With `every_line` on, that is every line, not
   only questions; with `mention: true` it @mentions you (or replies to your line) in a chat
-  you otherwise do not relay. `reply --recording <line>` answers in the chat.
+  you otherwise do not relay. A chat you watch (`sync.py watch`) relays every line, and a
+  line from a watched chat in another project carries `project`. `reply --recording <line>` answers in the chat.
 - `ping`: a line the captain wrote to you in a Ping (a direct message), outside the project.
   `reply --recording <line>` answers in the Ping. Never answer a Ping with the `basecamp`
   CLI directly.
@@ -191,7 +192,7 @@ defaults: what the sync enforces is changed in the config, and only when the cap
 
 - Post, comment, complete or answer in Basecamp only through `sync.py` and its commands
   (`reply`, `ask`, `answer`, `todo create|track|comment|complete|subtask`, `decide`, `post-message`;
-  `unmonitored handle|forget` only edit local state). Never
+  `unmonitored handle|forget` and `watch|unwatch` only edit local state). Never
   use the `basecamp` CLI or basecamp-axi to write directly, and never delete, trash or archive
   anything. basecamp-axi, when installed, is for your own reading of Basecamp (the defaults
   file says how); the sync never uses it.

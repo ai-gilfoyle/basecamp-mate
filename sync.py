@@ -6,7 +6,8 @@ readers poll Basecamp and append pending records; the commands post exactly what
 the agent hands them (`reply`, `ask`, `answer`, `todo ...`, `post-message`).
 behaviors.py is the behaviors layer: opt-in workflows a home turns on in its config
 and that compose the tools: the card mirror ("tables", "repos"; off with "cards":
-false), the chat inbox ("chats"), chat asks ("ask_chat"), check-in answering
+false), the chat inbox ("chats"), chat watches (`sync.py watch`: one chat in any project of
+the account, kept in chats.json), chat asks ("ask_chat"), check-in answering
 ("checkins"), release announcements ("releases"), decision to-dos ("todos"),
 reports ("message_board"), Pings ("pings": the owner's direct messages to the agent's
 login), to-do requests ("assigned_todos": to-dos the owner assigns to the agent's login),
@@ -22,16 +23,16 @@ repair sweep (every 5 minutes without notifications). `--all` runs every step.
 
 Deterministic, no model calls. Safety bounds, enforced here:
   - only the configured account, project, card tables, chats, check-ins, to-do set
-    and message board are touched, and, with "pings" on, the Pings the agent's login
-    is in with the owner; with "assigned_todos" on, the project's to-dos assigned to
-    the agent's login (with "scope": "account", any project's) are read and
-    acknowledged with a 👀; the agent login's notifications and boosts are read across
-    the account, but only this project's (and those Pings and requests) are acted on,
-    and an owner's @mention of the agent anywhere in the project is relayed (with
+    and message board are touched, and the chats the agent watches with `sync.py
+    watch`, and, with "pings" on, the Pings the agent's login is in with the owner;
+    with "assigned_todos" on, the project's to-dos assigned to the agent's login (with
+    "scope": "account", any project's) are read and acknowledged with a 👀; the agent
+    login's notifications and boosts are read across the account, but only this
+    project's (and those Pings, requests and watched chats) are acted on, and an
+    owner's @mention of the agent anywhere in the project is relayed (with
     "mentions": {"scope": "account"}, anywhere in the account, and comments on threads
-    it follows there); with
-    "backup" on, the config and state files are uploaded to its Docs & Files folder
-    (a changed file as a new version of its upload there);
+    it follows there); with "backup" on, the config and state files are uploaded to
+    its Docs & Files folder (a changed file as a new version of its upload there);
   - nothing is ever deleted, trashed or archived, except the acting user's own 👀
     boost once a question is answered; the timer run posts no comment, and its only
     writes besides the card mirror are 👀/👍 acknowledgement boosts, marking the agent
@@ -50,6 +51,8 @@ the same project (or Pings, account-wide to-do requests or account-wide mentions
 Usage: sync.py --home <home> --config <config.json> [--all] [--dry-run] [--include-prereleases] [--allow-duplicate]
        sync.py status      (the runs recorded on this computer; also bin/basecamp-mate status)
        sync.py reply --home <home> --config <config.json> --recording <comment, chat line or Ping line id> --body-file <file> [--again] [--dry-run]
+       sync.py watch --home <home> --config <config.json> --chat <chat URL> [--after-line <line id>] [--until YYYY-MM-DD] [--dry-run]
+       sync.py unwatch --home <home> --config <config.json> --chat <chat URL> [--dry-run]
        sync.py ask --home <home> --config <config.json> --body-file <file> [--dry-run]
        sync.py answer --home <home> --config <config.json> --question <check-in question id> --body-file <file> [--dry-run]
        sync.py todo create --home <home> --config <config.json> --key <key> --title <text> [--body-file <file>] [--project <id>] [--list <id>] [--due YYYY-MM-DD] [--subtask <question>]... [--card-table <id> --column <id>] [--dry-run]
@@ -75,7 +78,7 @@ from datetime import datetime, timezone
 import behaviors, runs
 from behaviors import COLUMNS, render_decision, render_release, inline_md  # noqa: F401
 from tools import (Tools, THUMBS, EYES, is_due, render_reply, is_emoji, is_thumbs_up,  # noqa: F401
-                   parse_lavish, parse_show, task_item, none)
+                   parse_lavish, parse_show, task_item, none, parse_chat_url)
 
 
 class Sync(Tools):
@@ -144,6 +147,24 @@ class Sync(Tools):
                 self.save_json("timer.json", timer)
         return plan
 
+    def watch(self, url, after_line=None, until=None):
+        """Tools.watch, then a warning when another home's live run on this login already reads the chat's project:
+        while it does, the timer skips the chat, so only an @mention there reaches an agent (that home's)."""
+        done = super().watch(url, after_line, until)
+        bucket, chat, _ = parse_chat_url(url, self.account)
+        if bucket == str(self.project):
+            return done
+        me = self.acting_id()
+        homes = sorted(c.get("home") or "?" for c in runs.Registry().holders(
+            self.config_path, self.cfg, me if isinstance(me, int) else None, bucket))
+        if homes:
+            say = f"watch: warning: another home's live run reads project {bucket} with this login ({', '.join(homes)}), " \
+                  f"so chat {chat} is skipped while it runs: an @mention of the agent there reaches that home, " \
+                  "but a plain answer reaches no agent"
+            self.log(say)
+            print(say)
+        return done
+
     def claim(self, allow=False):
         """Claim what this config watches for this run (runs.py): False when another home's live run overlaps.
 
@@ -151,15 +172,41 @@ class Sync(Tools):
         at most hourly, and the run reads nothing. "allow_duplicate": true in the config (or
         `allow`) runs anyway, noting the overlap once. A dry run checks and claims nothing,
         and only prints.
+
+        A chat watched with `sync.py watch` never refuses the run: when another live home on
+        this login reads the chat's project as its own, this run skips that chat
+        (`watch_held`), logged when that starts and when it ends, so that home reads it
+        alone; this is checked every run, so it also covers a home that starts after the watch.
         """
         allow = allow or self.cfg.get("allow_duplicate") is True
         me = self.acting_id()
         reg = runs.Registry()
-        others = reg.claim(self.config_path, self.home, self.cfg, me if isinstance(me, int) else None, allow=allow, dry=self.dry)
+        self.watch_held = set()
+        self.end_watches()  # a watch past its day, or with an "until" that is not a date, ends here, logged once
+        buckets = {str(r.get("bucket") or self.project) for r in self.watches().values()}
+        others = reg.claim(self.config_path, self.home, self.cfg, me if isinstance(me, int) else None, allow=allow, dry=self.dry,
+                           buckets=buckets)
+        self.watch_held = set(reg.held)
         now, say = reg.now(), print if self.dry else self.log
         homes = sorted(c.get("home") or "?" for c, _ in others)
         with self.locked("sync"):
             timer = self.load("timer.json", {})
+            held = {b: sorted(c.get("home") or "?" for c in cs) for b, cs in sorted(reg.held.items())}
+            if held != (timer.get("watch_held") or {}):
+                for b, hs in held.items():
+                    if (timer.get("watch_held") or {}).get(b) != hs:
+                        chats = sorted(c for c, r in self.watches(held=True).items() if str(r.get("bucket") or self.project) == b)
+                        say(f"watch: skipping watched chat {', '.join(chats)} in project {b}: another home's live run "
+                            f"reads that project with this login ({', '.join(hs)}); an @mention of the agent there "
+                            "reaches that home, but a plain answer reaches no agent until it stops")
+                for b in sorted(set(timer.get("watch_held") or {}) - set(held)):
+                    say(f"watch: reading the watched chats in project {b} again: no other home's live run reads it now")
+                if held:
+                    timer["watch_held"] = held
+                else:
+                    timer.pop("watch_held", None)
+                if not self.dry:
+                    self.save_json("timer.json", timer)
             dup = timer.get("duplicate") or {}
             hourly = not allow and now - dup.get("noted", 0) >= DUPLICATE_NOTE
             if others and (dup.get("with") != homes or dup.get("allowed") != allow or hourly):
@@ -308,6 +355,19 @@ def cli(argv=None, runner=subprocess.run):
         ap.add_argument("--dry-run", action="store_true")
         a = ap.parse_args(argv[1:])
         return command(a, f"reply {a.recording}", lambda s: s.reply(a.recording, read(a.body_file), again=a.again), runner)
+    if argv[:1] in (["watch"], ["unwatch"]):
+        what = argv[0]
+        ap = common(f"sync.py {what}", "Watch one chat in any project of the account: relay the listened-to people's lines "
+                    "there from a given line on." if what == "watch" else "Stop watching a chat.")
+        ap.add_argument("--chat", required=True, help="the chat's Basecamp URL (a line's URL, chats/<chat>@<line>, also works)")
+        if what == "watch":
+            ap.add_argument("--after-line", type=int, help="relay only lines after this one (default: the line the URL "
+                                                           "names, else the chat's newest line now)")
+            ap.add_argument("--until", help="stop watching once this day (YYYY-MM-DD) has passed")
+        ap.add_argument("--dry-run", action="store_true")
+        a = ap.parse_args(argv[1:])
+        return command(a, what, lambda s: s.watch(a.chat, a.after_line, a.until) if what == "watch"
+                       else s.unwatch(a.chat), runner)
     if argv[:1] in (["ask"], ["answer"]):
         what = argv[0]
         ap = common(f"sync.py {what}", "Post a new line in the configured ask_chat, @mentioning the owner." if what == "ask"
@@ -402,9 +462,10 @@ def cli(argv=None, runner=subprocess.run):
     a = ap.parse_args(argv)
     s = Sync(a.home, a.config, dry=a.dry_run, runner=runner, prereleases=a.include_prereleases)
     try:
-        if not s.claim(allow=a.allow_duplicate):
-            return 1
-        s.main(due=not a.all)
+        with s.locked("sync"):
+            if not s.claim(allow=a.allow_duplicate):
+                return 1
+            s.main(due=not a.all)
     except Exception as e:
         s.log(f"FAILED {type(e).__name__}: {e}")
         return 1

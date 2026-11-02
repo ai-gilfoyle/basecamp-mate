@@ -13,6 +13,11 @@ What a config watches (`watches`): its project, and, account-wide, the Pings of 
 "account"). Two claims overlap when they share one of those with the same login: the same
 Basecamp person when both know it, else the same CLI profile.
 
+A chat its home watches with `sync.py watch` never makes a run refuse: its project is
+not claimed. Instead, when another live home on the same login claims that project,
+`claim` reports it as held and the run skips that chat (Sync.claim), so the home that
+owns the project reads it alone; this also covers a home that starts after the watch.
+
 Each config's claim is one file, `<digest of the config path>.json`, in the directory
 $BASECAMP_MATE_RUNS (default ~/.local/state/basecamp-mate/runs): the config, the home,
 the login, the watches, the run's pid and its process start time, and when it last ran.
@@ -112,6 +117,7 @@ def describe(claim, now):
 class Registry:
     def __init__(self, path=None, now=time.time):
         self.dir, self.now = path or directory(), now
+        self.held = {}  # set by claim: watched project id -> the live claims of other homes on this login that hold it
 
     def file(self, config):
         return os.path.join(self.dir, hashlib.sha256(os.path.realpath(config).encode()).hexdigest()[:16] + ".json")
@@ -137,16 +143,28 @@ class Registry:
             fcntl.flock(f, fcntl.LOCK_EX)
             yield
 
-    def claim(self, config, home, cfg, person, allow=False, dry=False):
+    def holders(self, config, cfg, person, bucket):
+        """The live claims of other configs on `cfg`'s login that claim project `bucket` as their own."""
+        config = os.path.realpath(config)
+        mine = {"profile": cfg.get("profile") or "", "person": person if isinstance(person, int) else None}
+        token, now = f"project {cfg['account']}/{bucket}", self.now()
+        return [c for c in self.claims() if c.get("config") != config and same_login(mine, c) and live(c, now)
+                and token in (c.get("watches") or [])]
+
+    def claim(self, config, home, cfg, person, allow=False, dry=False, buckets=()):
         """Claim `cfg`'s watches for this run: the live overlapping claims of other configs, each with what it shares.
 
         Nothing is claimed when any overlap and `allow` is false; the caller refuses to run.
         A dry run checks and claims nothing. Claims whose config is gone and whose run is
-        over are removed.
+        over are removed. `buckets` are the projects of the chats this home watches (`sync.py
+        watch`): never claimed and never an overlap; each one another live home on this login
+        claims as its project is left in `self.held` (project id -> those claims), for the
+        caller to skip.
         """
         config = os.path.realpath(config)
         mine = {"config": config, "home": os.path.abspath(home), "profile": cfg.get("profile") or "",
                 "person": person if isinstance(person, int) else None, "watches": watches(cfg)}
+        account, self.held = str(cfg["account"]), {}
         with self.locked():
             now = self.now()
             others = []
@@ -160,6 +178,10 @@ class Registry:
                 shared = overlap(mine, c)
                 if shared and live(c, now):
                     others.append((c, shared))
+                if same_login(mine, c) and live(c, now):
+                    for b in buckets:
+                        if str(b) != str(cfg["project"]) and f"project {account}/{b}" in (c.get("watches") or []):
+                            self.held.setdefault(str(b), []).append(c)
             if (others and not allow) or dry:
                 return others
             pid = os.getpid()
