@@ -841,7 +841,8 @@ class Timesheet(Behavior):
     --key <key> [--on <to-do or card URL>] --workdir <dir>` and `timesheet stop --key <key>`
     (timesheet.json "items"). Active time is read from the Claude Code transcripts of each
     source, only between its start and stop: a gap of at most GAP between two events of a
-    transcript is active, and so is a wait of at most TOOL on a tool call the agent made; the
+    transcript is active, and so is a whole wait of at most TOOL from a tool call the agent
+    made to its result; the
     spans of all a key's transcripts are merged (time is never counted twice), split by US
     Eastern day and rounded to the nearest quarter hour. Hourly, each finished day (TOOL past
     its US Eastern midnight, so its last tool wait is known) with a quarter hour or more is
@@ -873,8 +874,8 @@ class Timesheet(Behavior):
         for src in item.get("sources") or []:
             lo = datetime.fromisoformat(src["from"].replace("Z", "+00:00"))
             hi = datetime.fromisoformat(src["to"].replace("Z", "+00:00")) if src.get("to") else now
-            for events in self.t.transcript_events(src["path"], lo).values():
-                for a, b in active_spans(events, GAP, TOOL):
+            for times, waits in self.t.transcript_events(src["path"], lo).values():
+                for a, b in active_spans(times, waits, GAP, TOOL):
                     a, b = max(a, lo), min(b, hi)
                     if a < b:
                         spans.append((a, b))
@@ -990,10 +991,11 @@ GAP, TOOL = timedelta(minutes=5), timedelta(minutes=60)  # the longest active ga
 DESCRIPTION = "Active agent time: "  # what each entry's description starts with, before its key
 
 
-def active_spans(events, gap, tool):
-    """The active spans of one transcript's sorted (time, a tool call is running) events: each gap to the next event of
-    at most `gap`, or of at most `tool` while a tool call is running."""
-    return [(a, b) for (a, waits), (b, _) in zip(events, events[1:]) if timedelta(0) < b - a <= (tool if waits else gap)]
+def active_spans(times, waits, gap, tool):
+    """The active spans of one transcript: each gap of at most `gap` between its sorted event `times`, and each tool
+    wait in `waits` (call time, result time) of at most `tool` in all; a longer wait adds nothing."""
+    return ([(a, b) for a, b in zip(times, times[1:]) if timedelta(0) < b - a <= gap]
+            + [(a, b) for a, b in waits if timedelta(0) < b - a <= tool])
 
 
 def merged(spans):

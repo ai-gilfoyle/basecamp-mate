@@ -586,9 +586,10 @@ used. `sync.py timesheet stop C --key <key>` stops counting. Nothing is guessed 
 or task names.
 
 **Active time** is read from the transcript lines' timestamps, between each start and stop:
-a gap of at most 5 minutes between two lines of a transcript counts, and so does a gap of
-at most 60 minutes while a tool call the agent made runs (a long command, a subagent: from
-the call to its result, across the lines between them); a longer gap is idle. The spans of all a key's transcripts are merged, so time is never counted twice,
+a gap of at most 5 minutes between two lines of a transcript counts, and so does a whole
+wait of at most 60 minutes on a tool call the agent made (a long command, a subagent),
+from the call to its result, across the lines between them. A longer gap is idle, a longer
+wait adds nothing beyond its short gaps, and a call with no result adds nothing. The spans of all a key's transcripts are merged, so time is never counted twice,
 then split by US Eastern day (`America/New_York`, whatever the config `timezone`) and
 rounded to the nearest quarter hour.
 
@@ -1405,7 +1406,8 @@ answering in that chat, `unwatch` stopping reads, a watch past its `--until` day
 nothing and ending, refusals (a past day, another account, a configured chat, a URL that is
 no chat), a dry run, a blocked sender answered only when they address the agent, and the
 behavior's cadence; `tests/test_timesheet.py` covers timesheets: active time (short gaps
-and tool waits counted, a tool wait lasting to its result across the lines between, idle
+and tool waits counted, a tool wait lasting to its result across the lines between, a longer wait or one with no
+result adding nothing, idle
 gaps and an over-long tool wait not,
 several transcripts merged and a symlinked copy counted once, only between start and
 stop, a day cut at US Eastern midnight whatever the config zone, rounding to quarters), off

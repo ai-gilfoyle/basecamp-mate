@@ -54,11 +54,16 @@ class TimesheetStub(Stub):
                 if a[:2] == ["api", "post"] and a[2].endswith("/timesheet/entries.json")]
 
 
-def ev(at, tool=False):
-    """One transcript line at UTC time `at` ("HH:MM" on DAY, or a full ISO time); `tool`: an assistant tool call."""
+def ev(at, tool=None, result=None):
+    """One transcript line at UTC time `at` ("HH:MM" on DAY, or a full ISO time); `tool`: an assistant line calling the
+    tool with that id; `result`: the user line with the result of the tool call with that id."""
     ts = at if "T" in at else f"{DAY}T{at}:00.000Z"
     if tool:
-        return {"type": "assistant", "timestamp": ts, "message": {"content": [{"type": "tool_use", "name": "Bash"}]}}
+        return {"type": "assistant", "timestamp": ts,
+                "message": {"content": [{"type": "tool_use", "id": tool, "name": "Bash"}]}}
+    if result:
+        return {"type": "user", "timestamp": ts,
+                "message": {"content": [{"type": "tool_result", "tool_use_id": result, "content": "ok"}]}}
     return {"type": "user", "timestamp": ts, "message": {"content": "go"}}
 
 
@@ -125,23 +130,33 @@ class ActiveTime(TimesheetBase):
     def test_short_gaps_and_tool_waits_count_long_idle_gaps_do_not(self):
         # 14:00-14:06 in 3-minute steps (6 min), 14:20 after an idle 14 minutes (not counted), a tool call at 14:20
         # answered at 14:50 (30 min), then 15:55 after an hour's idle (not counted): 36 min, 0.5 h.
-        self.transcript("s1", ev("14:00"), ev("14:03"), ev("14:06"), ev("14:20", tool=True), ev("14:50"), ev("15:55"))
+        self.transcript("s1", ev("14:00"), ev("14:03"), ev("14:06"), ev("14:20", tool="t1"), ev("14:50", result="t1"), ev("15:55"))
         self.track()
         self.assertEqual(self.hours(), {DAY: 0.5})
 
     def test_a_tool_wait_lasts_until_its_result_across_the_lines_between(self):
         # A tool call at 14:00, a progress line at 14:01, its result at 14:30: 30 minutes, 0.5 h.
-        call = {"type": "assistant", "timestamp": f"{DAY}T14:00:00Z",
-                "message": {"content": [{"type": "tool_use", "id": "t1", "name": "Bash"}]}}
         progress = {"type": "progress", "timestamp": f"{DAY}T14:01:00Z"}
-        result = {"type": "user", "timestamp": f"{DAY}T14:30:00Z",
-                  "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]}}
-        self.transcript("s1", call, progress, result, ev("15:10"))
+        self.transcript("s1", ev("14:00", tool="t1"), progress, ev("14:30", result="t1"), ev("15:10"))
         self.track()
         self.assertEqual(self.hours(), {DAY: 0.5})
 
     def test_a_tool_wait_over_the_limit_does_not_count(self):
-        self.transcript("s1", ev("14:00", tool=True), ev("15:30"))  # 90 minutes on one tool call: over 60
+        self.transcript("s1", ev("14:00", tool="t1"), ev("15:30", result="t1"))  # 90 minutes on one tool call: over 60
+        self.track()
+        self.assertEqual(self.hours(), {})
+
+    def test_a_long_tool_wait_with_a_progress_line_between_counts_only_the_short_gaps(self):
+        # A call at 14:00, progress at 14:30 and its result at 15:30: a 90-minute wait, over 60, so none of it counts;
+        # 15:30-15:45 in 3-minute steps after it (15 min) does: 0.25 h.
+        progress = {"type": "progress", "timestamp": f"{DAY}T14:30:00Z"}
+        self.transcript("s1", ev("14:00", tool="t1"), progress, ev("15:30", result="t1"),
+                        *[ev(f"15:{m:02d}") for m in range(33, 46, 3)])
+        self.track()
+        self.assertEqual(self.hours(), {DAY: 0.25})
+
+    def test_a_tool_call_with_no_result_counts_no_wait(self):
+        self.transcript("s1", ev("14:00", tool="t1"), ev("14:40"))  # interrupted: a new prompt, no result
         self.track()
         self.assertEqual(self.hours(), {})
 

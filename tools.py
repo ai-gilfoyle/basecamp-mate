@@ -2481,10 +2481,10 @@ class Tools:
 
     def transcript_events(self, path, since):
         """The events of each Claude Code transcript under directory `path` changed at or after `since`: {session file
-        name: [(time, a tool call is running), ...] sorted}. A missing directory has none.
+        name: ([event time, ...] sorted, [(tool call time, its result's time), ...])}. A missing directory has none.
 
-        Each line with a "timestamp" is an event. A tool call (an assistant line's tool_use) runs until the line with its
-        tool_result, across the events between them; a new prompt (a user line that is no tool result) ends any left.
+        Each line with a "timestamp" is an event. A tool wait runs from an assistant line's tool_use to the line with its
+        tool_result, across the events between them; a call with no result yet has no wait.
         A session is keyed by its file name, so one seen under two paths (a symlinked home) counts once.
         """
         files = sorted(glob.glob(os.path.join(glob.escape(path), "**", "*.jsonl"), recursive=True))
@@ -2493,7 +2493,7 @@ class Tools:
             try:
                 if datetime.fromtimestamp(os.path.getmtime(f), timezone.utc) < since:
                     continue
-                events, running = [], set()
+                events, calls, results = [], {}, {}
                 with open(f, errors="replace") as fh:
                     for ln in fh:
                         try:
@@ -2505,16 +2505,18 @@ class Tools:
                             at = at.replace(tzinfo=timezone.utc)
                         content = (o.get("message") or {}).get("content") if isinstance(o.get("message"), dict) else None
                         blocks = [c for c in content if isinstance(c, dict)] if isinstance(content, list) else []
-                        if o.get("type") == "assistant":
-                            running |= {c.get("id") for c in blocks if c.get("type") == "tool_use"}
-                        elif o.get("type") == "user":
-                            results = {c.get("tool_use_id") for c in blocks if c.get("type") == "tool_result"}
-                            running = running - results if results else set()
-                        events.append((at, bool(running)))
+                        for c in blocks:
+                            if c.get("type") == "tool_use" and c.get("id"):
+                                calls.setdefault(c["id"], at)
+                            elif c.get("type") == "tool_result" and c.get("tool_use_id"):
+                                results.setdefault(c["tool_use_id"], at)
+                        events.append(at)
             except OSError:
                 continue
-            out.setdefault(os.path.basename(f), []).extend(events)
-        return {k: sorted(v) for k, v in out.items()}
+            times, waits = out.setdefault(os.path.basename(f), ([], []))
+            times.extend(events)
+            waits.extend((at, results[i]) for i, at in calls.items() if i in results)
+        return {k: (sorted(times), waits) for k, (times, waits) in out.items()}
 
     def unmonitored_handle(self, key, decision):
         """Mark unmonitored key `key` handled with the owner's `decision`; it stays quiet until forgotten."""
