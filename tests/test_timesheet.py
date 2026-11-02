@@ -469,13 +469,42 @@ class Posting(TimesheetBase):
         self.side("timesheet.json", state)
         self.post()
         self.assertEqual(len(self.stub.entries()), 3)  # one try a day
-        self.assertIn("timesheet: a-task's to-do or card still refuses entries", self.log())
+        self.assertIn(f"timesheet: a-task's to-do or card {TODO_URL} still not found", self.log())
         self.assertEqual(self.log().count("FAILED"), 1)
         self.assertEqual(self.cli("timesheet", "start", "--key", "a-task", "--on", TODO_URL.replace("4242", "5150"),
                                   "--workdir", self.tmp)[0], 0)
         self.assertNotIn("a-task", self.state()["missing"])
         self.post()
         self.assertEqual(sorted(self.state()["posted"]), ["a-task", "b-task"])
+
+    def test_a_probe_that_finds_its_to_do_missing_leaves_the_projects_try_to_the_next_key(self):
+        self.track(key="a-task")
+        self.track(key="b-task", rec=5150)
+        self.stub.refuse = "forbidden"
+        self.post()
+        self.stub.refuse, self.stub.gone = None, {4242}
+        self.refused_yesterday()
+        self.post()  # a-task's probe finds its to-do gone; b-task probes the project in the same run and posts
+        self.assertEqual(sorted(self.state()["posted"]), ["b-task"])
+        self.assertEqual(self.state()["refused"], {})
+        self.assertEqual(list(self.state()["missing"]), ["a-task"])
+        self.assertEqual([r["key"] for r in self.records() if r["kind"] == "timesheet-missing"], ["a-task"])
+        self.assertIn(f"timesheet: project {OTHER} accepts entries again", self.log())
+
+    def test_a_missing_keys_retry_refused_by_the_project_records_the_refusal(self):
+        self.track(key="a-task")
+        self.stub.gone = {4242}
+        self.post()
+        state = self.state()
+        state["missing"]["a-task"]["probed"] = "2026-10-01"
+        self.side("timesheet.json", state)
+        self.stub.gone, self.stub.refuse = set(), "forbidden"
+        self.post()
+        self.assertEqual(self.state()["refused"][OTHER]["code"], "forbidden")
+        self.assertEqual([r["code"] for r in self.records() if r["kind"] == "timesheet-refused"], ["forbidden"])
+        self.track(key="b-task", rec=5150)
+        self.post()
+        self.assertEqual(len(self.stub.entries()), 2)  # the project's try for today is used: b-task waits
 
     def test_an_unreadable_directory_defers_the_key_until_it_reads(self):
         sub = os.path.join(self.work, "s1", "subagents")

@@ -856,7 +856,8 @@ class Timesheet(Behavior):
     (a `timesheet-refused` record, one FAILED line); from then on it is tried with one entry (a
     probe) at most once a local day, logged without FAILED, until an entry there posts again.
     A key whose to-do or card is not found is reported and tried the same way, alone
-    (a `timesheet-missing` record, state "missing"), so the project's other keys still post.
+    (a `timesheet-missing` record, state "missing"), so the project's other keys still post: a
+    not found never uses up the project's daily try, also during it.
     A stopped key whose days wait only on such a refusal keeps them as "unposted" (its
     sources marked "counted", never read again; `timesheet start` adds new sources to them)
     and posts them with the daily probe, settling once all are posted. Any other failed entry is tried again on the next run. A key with a transcript that cannot be read is neither posted nor settled that
@@ -965,20 +966,21 @@ class Timesheet(Behavior):
                 save()
             bucket, rid, url = target
             for day, h in sorted(due.items()):
-                scope, held = (("project", bucket), refused[bucket]) if bucket in refused else (("key", key), missing.get(key))
-                probe = held is not None
-                what = f"project {bucket}" if scope[0] == "project" else f"{key}'s to-do or card"
-                if probe and (scope in tried or held.get("probed") == today):
+                pscope, kscope, proj, gone = ("project", bucket), ("key", key), refused.get(bucket), missing.get(key)
+                held = [(w, sc, r) for w, sc, r in ((f"project {bucket}", pscope, proj),
+                                                    (f"{key}'s to-do or card", kscope, gone)) if r is not None]
+                waiting = [w for w, sc, r in held if sc in tried or r.get("probed") == today]
+                if waiting:
                     if t.dry:
-                        t.log(f"dry timesheet: {key} {h:g} h on {day} waits: {what} refused entries "
-                              f"({held.get('error')}); it is tried again once a day")
+                        t.log(f"dry timesheet: {key} {h:g} h on {day} waits: {waiting[0]} refused entries; "
+                              f"it is tried again once a day")
                     continue
+                what = held[0][0] if held else None
                 planned += 1
                 if t.dry:
-                    t.log(f"dry timesheet: {'try ' + what + ' again with ' if probe else 'post '}"
+                    t.log(f"dry timesheet: {'try ' + what + ' again with ' if what else 'post '}"
                           f"{h:g} h on {day} for {key} on {url or rid}")
-                    if probe:
-                        tried.add(scope)
+                    tried.update(sc for _, sc, _ in held)
                     continue
                 if me is None:
                     try:
@@ -988,9 +990,9 @@ class Timesheet(Behavior):
                         t.log(f"timesheet: nothing posted, retrying next run: {e}")
                         return
                     me = t.acting_id()
-                if probe:
-                    tried.add(scope)
-                    held["probed"] = today
+                if gone is not None:
+                    tried.add(kscope)
+                    gone["probed"] = today
                     save()
                 try:
                     entry = next((e for e in t.timesheet_entries(bucket, rid, day, me)
@@ -1000,26 +1002,35 @@ class Timesheet(Behavior):
                     entry = entry or t.timesheet_entry(bucket, rid, day, h, f"{DESCRIPTION}{key}")
                 except Exception as e:
                     code = getattr(e, "code", None)
-                    if probe:
-                        t.log(f"timesheet: {what} still refuses entries ({key} {h:g} h on {day}: "
-                              f"{type(e).__name__}: {e}); tried again tomorrow")
-                    elif code == "not_found":
-                        missing[key] = {"at": now_iso(), "error": str(e), "code": code, "date": day, "probed": today}
-                        tried.add(("key", key))
-                        t.record({"kind": "timesheet-missing", "key": key, "bucket": int(bucket), "date": day, "hours": h,
-                                  "url": url, "error": str(e), "code": code, "at": missing[key]["at"]})
-                        t.log(f"FAILED timesheet: {key}'s to-do or card {url or rid} was not found for its {h:g} h on "
-                              f"{day} ({type(e).__name__}: {e}); its entries are tried again once a day")
+                    if code == "not_found":  # about this to-do or card only: the project's daily try is not used up
+                        tried.add(kscope)
+                        if gone is None:
+                            missing[key] = {"at": now_iso(), "error": str(e), "code": code, "date": day, "probed": today}
+                            t.record({"kind": "timesheet-missing", "key": key, "bucket": int(bucket), "date": day,
+                                      "hours": h, "url": url, "error": str(e), "code": code, "at": missing[key]["at"]})
+                            t.log(f"FAILED timesheet: {key}'s to-do or card {url or rid} was not found for its {h:g} h "
+                                  f"on {day} ({type(e).__name__}: {e}); its entries are tried again once a day")
+                        else:
+                            t.log(f"timesheet: {key}'s to-do or card {url or rid} still not found ({h:g} h on {day}: "
+                                  f"{type(e).__name__}: {e}); tried again tomorrow")
                         save()
-                    elif code in REFUSED:
+                        continue
+                    if proj is None and code in REFUSED:
                         refused[bucket] = {"at": now_iso(), "error": str(e), "code": code, "key": key, "date": day,
                                            "probed": today}
-                        tried.add(("project", bucket))
+                        tried.add(pscope)
                         t.record({"kind": "timesheet-refused", "bucket": int(bucket), "key": key, "date": day, "hours": h,
                                   "url": url, "error": str(e), "code": code, "at": refused[bucket]["at"]})
                         t.log(f"FAILED timesheet: project {bucket}'s timesheet refused {key}'s {h:g} h on {day} on "
                               f"{url or rid} ({type(e).__name__}: {e}); its entries are tried again once a day")
                         save()
+                    elif what:
+                        if proj is not None:
+                            tried.add(pscope)
+                            proj["probed"] = today
+                            save()
+                        t.log(f"timesheet: {what} still refuses entries ({key} {h:g} h on {day}: "
+                              f"{type(e).__name__}: {e}); tried again tomorrow")
                     else:
                         t.log(f"FAILED timesheet: {key} {h:g} h on {day} on {url or rid}, retrying next run: "
                               f"{type(e).__name__}: {e}")
