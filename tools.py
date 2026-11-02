@@ -2414,14 +2414,16 @@ class Tools:
         (map.json). A workdir is the directory the work's Claude Code session runs in; its
         transcripts are in CLAUDE_CONFIG_DIR (default ~/.claude)/projects/<the path with each
         character that is not a letter or digit as ->. A repeat for a source already counted
-        adds nothing; a new one, or a stopped one, starts counting from now. Writes nothing to
-        Basecamp.
+        adds nothing; a new one, or a stopped one, starts counting from now. A directory another
+        key is counting now is refused, naming that key: its time would be counted twice. Writes
+        nothing to Basecamp.
         """
         sources = [d for w in workdirs for d in claude_transcript_dirs(w)]
         if not str(key).strip():
             raise ValueError("a timesheet key is needed")
         if not sources:
             raise ValueError("give --workdir: the directory the work's Claude Code session runs in")
+        self.timesheet_shared(key, sources, self.load("timesheet.json", {}))
         target = None
         if on is not None:
             bucket, rid = parse_recording(on, self.account)
@@ -2436,10 +2438,12 @@ class Tools:
             return False
         with self.locked("timesheet.json"):
             state = self.load("timesheet.json", {})
+            self.timesheet_shared(key, sources, state)
             item = state.setdefault("items", {}).setdefault(key, {"sources": []})
             if target:
                 item["on"] = target
             item.pop("settled", None)
+            item.pop("unposted", None)
             added = []
             for src in dict.fromkeys(sources):
                 if not any(s["path"] == src and not s.get("to") for s in item["sources"]):
@@ -2449,6 +2453,17 @@ class Tools:
         self.log(f"timesheet start {key}: " + (", ".join(added) if added else "already counting")
                  + (f" on {target['url'] or target['recording']}" if target else ""))
         return True
+
+    def timesheet_shared(self, key, sources, state):
+        """Refuse (ValueError) when another key than `key` is counting one of the transcript directories `sources` now."""
+        for other, item in sorted((state.get("items") or {}).items()):
+            if other == key:
+                continue
+            for s in item.get("sources") or []:
+                if not s.get("to") and s.get("path") in sources:
+                    raise ValueError(f"key {other} is already counting {s['path']}: two keys on one directory would count "
+                                     f"its time twice. Use a directory only this work runs in (a worker's worktree, never "
+                                     f"the home), or stop the other key first (sync.py timesheet stop --key {other})")
 
     def timesheet_stop(self, key):
         """Stop counting the agent's active time on `key`: each source counted ends now. Writes nothing to Basecamp."""
@@ -2473,11 +2488,11 @@ class Tools:
                        project=bucket) or []
 
     def timesheet_entry(self, bucket, recording, date, hours, description):
-        """Post one timesheet entry (`hours` on day `date`, YYYY-MM-DD) on to-do or card `recording` in `bucket`, tried
-        once: a failure may have posted it, so the next run reads the entries before posting again."""
-        body = {"date": date, "hours": f"{hours:g}", "description": description}
-        return self.bc("api", "post", f"/projects/{bucket}/recordings/{recording}/timesheet/entries.json",
-                       "-d", json.dumps(body), project=bucket, tries=1) or {}
+        """Log one timesheet entry (`hours` on day `date`, YYYY-MM-DD) on to-do or card `recording` in `bucket`
+        (`basecamp timesheet entry create`), tried once: a failure may have posted it, so the next run reads the
+        entries before posting again."""
+        return self.bc("timesheet", "entry", "create", str(recording), "--hours", f"{hours:g}", "--date", date,
+                       "--description", description, project=bucket, tries=1) or {}
 
     def transcript_events(self, path, since):
         """The events of each Claude Code transcript under directory `path` changed at or after `since`: {session file

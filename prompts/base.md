@@ -161,7 +161,7 @@ where the record was made, through `python3 SYNC/sync.py reply C --recording <id
 - `timesheet-unmapped` (`timesheet` config): your active time on `key` (`days`: day -> hours)
   is not posted because no to-do or card is named for it (reported once per key).
 - `timesheet-refused` (`timesheet` config): project `bucket`'s timesheet refused the entry
-  for `key` on `date` (`error`, `code`); the sync tries it again every run (reported once
+  for `key` on `date` (`error`, `code`); the sync tries it again once a day (reported once
   per project until an entry there posts).
 - `comment`, `question`, `approval` (card mirror only): their comment or 👍 on a card.
 - A FAILED line in `sync.log`: read it. A token failure needs `basecamp auth login -P firstmate`,

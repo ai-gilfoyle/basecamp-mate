@@ -19,7 +19,7 @@ DAY = "2026-10-20"  # a finished day, in America/New_York (UTC-4 then)
 
 
 class TimesheetStub(Stub):
-    """Adds a recording read and the timesheet entry post to the basecamp stub."""
+    """Adds a recording read, the timesheet entry read and `basecamp timesheet entry create` to the basecamp stub."""
 
     def __init__(self):
         super().__init__()
@@ -40,19 +40,25 @@ class TimesheetStub(Stub):
         if args[:2] == ["timesheet", "item"]:
             self.calls.append(args)
             return SimpleNamespace(stdout=json.dumps({"ok": True, "data": self.listed}), stderr="", returncode=0)
-        if args[:2] == ["api", "post"] and args[2].endswith("/timesheet/entries.json"):
-            self.calls.append(args)
+        if args[:3] == ["timesheet", "entry", "create"]:
+            self.calls.append([*args, "-p", cmd[-2]])
             if self.refuse:
                 return SimpleNamespace(stdout=json.dumps({"ok": False, "code": self.refuse, "error": "Resource not found",
                                                           "retryable": self.retryable}), stderr="", returncode=1)
             data = {"id": 7000 + len(self.calls), "app_url": "https://3.basecamp.com/1111111/entries/1"}
-            self.listed.append({**json.loads(args[4]), "id": data["id"], "creator": {"id": self.me}})  # Basecamp lists it
+            self.listed.append({**entry_body(args), "id": data["id"], "creator": {"id": self.me}})  # Basecamp lists it
             return SimpleNamespace(stdout=json.dumps({"ok": True, "data": data}), stderr="", returncode=0)
         return super().__call__(cmd, **kw)
 
     def entries(self):
-        return [(a[2], json.loads(a[4])) for a in self.calls
-                if a[:2] == ["api", "post"] and a[2].endswith("/timesheet/entries.json")]
+        """((project, recording id), {date, hours, description}) of each `timesheet entry create` tried, in order."""
+        return [((a[-1], int(a[3])), entry_body(a)) for a in self.calls if a[:3] == ["timesheet", "entry", "create"]]
+
+
+def entry_body(args):
+    """The date, hours and description a `timesheet entry create` call's flags give."""
+    flags = dict(zip(args[4::2], args[5::2]))
+    return {"date": flags["--date"], "hours": flags["--hours"], "description": flags["--description"]}
 
 
 def ev(at, tool=None, result=None):
@@ -177,14 +183,16 @@ class ActiveTime(TimesheetBase):
         self.track(frm=f"{DAY}T14:15:00Z", to=f"{DAY}T14:45:00Z")
         self.assertEqual(self.hours(), {DAY: 0.5})
 
-    def test_time_splits_at_us_eastern_midnight_whatever_the_config_zone(self):
-        # 03:30-04:30 UTC on Oct 21 is 23:30-00:30 in New York: half an hour on each day, in a UTC home too.
-        self.cfg(timezone="UTC")
+    def test_time_splits_at_midnight_in_the_config_zone_default_new_york(self):
+        # 03:30-04:30 UTC on Oct 21 is 23:30-00:30 in New York: half an hour on each day without a config zone; one
+        # hour on Oct 21 with "timezone": "UTC".
         self.transcript("s1", *[ev(f"2026-10-21T0{3 + (m // 60)}:{m % 60:02d}:00Z") for m in range(30, 91, 4)])
         self.track()
-        h = self.hours()
-        self.assertEqual(h.get("2026-10-20"), 0.5)
-        self.assertEqual(h.get("2026-10-21"), 0.5)
+        self.cfg(timezone=None)
+        self.assertEqual(self.hours(), {"2026-10-20": 0.5, "2026-10-21": 0.5})
+        self.assertEqual(self.stub.calls, [])  # the default is New York, not the captain's Basecamp zone
+        self.cfg(timezone="UTC")
+        self.assertEqual(self.hours(), {"2026-10-21": 1.0})
 
     def test_quarters_round_to_the_nearest(self):
         q = behaviors.quarters
@@ -226,8 +234,10 @@ class Posting(TimesheetBase):
     def test_posts_one_entry_per_day_once(self):
         self.track()
         self.post()
-        self.assertEqual(self.stub.entries(), [(f"/projects/{OTHER}/recordings/4242/timesheet/entries.json",
+        self.assertEqual(self.stub.entries(), [((OTHER, 4242),
                                                 {"date": DAY, "hours": "1", "description": "Active agent time: fix-import"})])
+        self.assertIn(["timesheet", "entry", "create", "4242", "--hours", "1", "--date", DAY, "--description",
+                       "Active agent time: fix-import", "-p", OTHER], self.stub.calls)
         self.assertEqual(self.state()["posted"]["fix-import"][DAY]["hours"], 1.0)
         self.post()
         self.post()
@@ -321,14 +331,14 @@ class Posting(TimesheetBase):
         self.assertIn("sync.py timesheet start --key no-card --on", body)
         self.side("todos.json", {"no-card": {"todo": 5150, "url": "https://x/todos/5150"}})
         self.post()
-        self.assertEqual([p for p, _ in self.stub.entries()], [f"/projects/{PROJECT}/recordings/5150/timesheet/entries.json"])
+        self.assertEqual([p for p, _ in self.stub.entries()], [(PROJECT, 5150)])
         self.assertNotIn("no-card", self.state()["unmapped"])
 
     def test_a_mirrored_card_is_the_target_of_its_task(self):
         self.track(key="task-a", on=False)
         self.side("map.json", {"task-a": {"card": 9001}})
         self.post()
-        self.assertEqual([p for p, _ in self.stub.entries()], [f"/projects/{PROJECT}/recordings/9001/timesheet/entries.json"])
+        self.assertEqual([p for p, _ in self.stub.entries()], [(PROJECT, 9001)])
 
     def test_an_entry_already_in_basecamp_is_only_added_to_the_ledger(self):
         # A post whose answer was lost: Basecamp has the entry, timesheet.json does not.
@@ -349,7 +359,7 @@ class Posting(TimesheetBase):
         self.post()
         self.assertEqual(sorted(b["description"] for _, b in self.stub.entries()),
                          ["Active agent time: task-a", "Active agent time: task-b"])
-        self.assertEqual({p for p, _ in self.stub.entries()}, {f"/projects/{OTHER}/recordings/4242/timesheet/entries.json"})
+        self.assertEqual({p for p, _ in self.stub.entries()}, {(OTHER, 4242)})
         self.assertEqual(sorted(self.state()["posted"]), ["task-a", "task-b"])
         self.assertNotIn("found an entry already posted", self.log())
         self.post()
@@ -363,26 +373,61 @@ class Posting(TimesheetBase):
         self.assertEqual(len(self.stub.entries()), 1)
         self.assertEqual(self.state()["posted"]["fix-import"][DAY]["entry"], 7000 + len(self.stub.calls))
 
-    def test_a_refused_project_is_reported_once_and_its_entries_tried_every_run(self):
+    def refused_yesterday(self):
+        """Move the refusal's last try to an earlier day, as if a day had passed."""
+        state = self.state()
+        state["refused"][OTHER]["probed"] = "2026-10-01"
+        self.side("timesheet.json", state)
+
+    def test_a_refused_project_is_reported_once_then_tried_with_one_entry_a_day(self):
         self.transcript("s2", *[ev(f"2026-10-21T14:{m:02d}:00Z") for m in range(0, 31, 3)])  # a second day, 0.5 h
         self.track()
         self.track(key="other-task")  # another to-do in the same project
         self.stub.refuse = "not_found"
         self.post()
-        self.assertEqual(len(self.stub.entries()), 4)  # every entry of the project is tried
-        self.assertIn(f"FAILED timesheet: fix-import 1 h on {DAY} on {TODO_URL}, retrying next run", self.log())
+        self.assertEqual(len(self.stub.entries()), 1)  # the project's other entries wait
+        self.assertEqual(self.log().count("FAILED"), 1)
+        self.assertIn(f"FAILED timesheet: project {OTHER}'s timesheet refused fix-import's 1 h on {DAY}", self.log())
         self.post()
-        self.assertEqual(len(self.stub.entries()), 8)
+        self.post()
+        self.assertEqual(len(self.stub.entries()), 1)  # tried again only the next day
         recs = [r for r in self.records() if r["kind"] == "timesheet-refused"]
         self.assertEqual(len(recs), 1)
         self.assertEqual((recs[0]["bucket"], recs[0]["code"], recs[0]["date"]), (int(OTHER), "not_found", DAY))
         _, body = behaviors.inbox_note(recs[0], "1111111", PROJECT)
         self.assertIn("timesheet tracking may be off in that project", body)
+        self.refused_yesterday()
+        self.post()
+        self.assertEqual(len(self.stub.entries()), 2)  # one probe
+        self.assertIn(f"timesheet: project {OTHER} still refuses entries", self.log())
+        self.assertEqual(self.log().count("FAILED"), 1)
+        self.assertEqual(len([r for r in self.records() if r["kind"] == "timesheet-refused"]), 1)
         self.assertEqual(self.state()["posted"], {})
         self.stub.refuse = None
-        self.post()
+        self.refused_yesterday()
+        self.post()  # the probe posts, and the project's other entries follow in the same run
+        self.assertIn(f"timesheet: project {OTHER} accepts entries again", self.log())
         self.assertEqual(sorted(self.state()["posted"]), ["fix-import", "other-task"])
+        self.assertEqual(len(self.state()["posted"]["fix-import"]), 2)
         self.assertEqual(self.state()["refused"], {})
+
+    def test_a_stopped_key_in_a_refused_project_settles_unposted_and_start_counts_it_again(self):
+        self.track(to=f"{DAY}T23:00:00Z")
+        self.stub.refuse = "forbidden"
+        self.post()
+        item = self.state()["items"]["fix-import"]
+        self.assertEqual((item["settled"], item["unposted"]), (True, {DAY: 1.0}))
+        self.assertIn(f"timesheet: fix-import stopped with 1 h on {DAY} not posted: project {OTHER} refuses entries",
+                      self.log())
+        self.refused_yesterday()
+        self.stub.calls.clear()
+        self.post()
+        self.assertEqual(self.stub.calls, [])  # settled: never read or tried again
+        self.stub.refuse = None
+        self.assertEqual(self.cli("timesheet", "start", "--key", "fix-import", "--workdir", self.tmp)[0], 0)
+        self.assertNotIn("unposted", self.state()["items"]["fix-import"])
+        self.post()
+        self.assertEqual([b["date"] for _, b in self.stub.entries()], [DAY])
 
     def test_other_failures_are_retried_every_run_and_not_reported_as_refused(self):
         self.track()
@@ -424,6 +469,19 @@ class Commands(TimesheetBase):
         self.assertEqual(self.cli("timesheet", "stop", "--key", "fix-import")[0], 0)
         self.assertTrue(all(s.get("to") for s in self.state()["items"]["fix-import"]["sources"]))
         self.assertEqual(self.cli("timesheet", "stop", "--key", "missing")[0], 1)
+
+    def test_start_refuses_a_directory_another_key_is_counting(self):
+        self.assertEqual(self.cli("timesheet", "start", "--key", "task-a", "--workdir", "/work/tree.1/repo")[0], 0)
+        before = self.state()
+        code, _ = self.cli("timesheet", "start", "--key", "task-b", "--workdir", "/work/tree.1/repo")
+        self.assertEqual(code, 1)
+        self.assertIn("key task-a is already counting", self.log())
+        self.assertIn("never the home", self.log())
+        self.assertEqual(self.state(), before)
+        self.assertEqual(self.cli("timesheet", "start", "--key", "task-a", "--workdir", "/work/tree.1/repo")[0], 0)
+        self.assertEqual(self.cli("timesheet", "stop", "--key", "task-a")[0], 0)
+        self.assertEqual(self.cli("timesheet", "start", "--key", "task-b", "--workdir", "/work/tree.1/repo")[0], 0)
+        self.assertEqual(sorted(self.state()["items"]), ["task-a", "task-b"])
 
     def test_start_refuses_a_recording_that_is_not_a_to_do_or_card_and_needs_a_workdir(self):
         self.stub.types[4242] = "Message"

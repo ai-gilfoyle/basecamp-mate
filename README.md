@@ -98,7 +98,7 @@ policy. Each does one thing to the configured account and project:
 | `sync.py status` | command | lists the sync runs on this computer, what each watches and with which login, and any `sync.py` running unrecorded (see "One home per project and login") |
 | `sync.py access` | command | prints who gets through to the agent, and where; read-only (see "People the sync listens to") |
 | `sync.py timesheet start\|stop\|post` | command | starts or stops counting the agent's active time on a key (a to-do or card, and the Claude Code transcripts the work is in; local state only), or posts the finished days now (`--dry-run` prints them) (see "Timesheets") |
-| transcript reader and timesheet entry | reader, primitive | reads the event times of Claude Code transcripts (local files only); reads the agent's timesheet entries on a to-do or card for a day (`basecamp timesheet item`) and posts one (`POST /projects/<bucket>/recordings/<id>/timesheet/entries.json`) |
+| transcript reader and timesheet entry | reader, primitive | reads the event times of Claude Code transcripts (local files only); reads the agent's timesheet entries on a to-do or card for a day (`basecamp timesheet item`) and logs one (`basecamp timesheet entry create`) |
 | `sync.py unmonitored list\|handle\|forget` | command | lists the unmonitored-event keys, marks one handled with the owner's decision, or drops one so it is raised again |
 | inbox note | primitive | queues a note in a firstmate home's inbox through its `bin/fm-inbox.sh note --request-id` |
 | card, Message Board and boost primitives | primitive | create, update, move, assign and unassign a card; post a board message; add an acknowledgement boost |
@@ -580,7 +580,10 @@ The agent names its work. `sync.py timesheet start C --key <key> --on <to-do or 
 --workdir <dir>` starts counting from now, in the Claude Code transcripts of sessions run in
 that directory (`~/.claude/projects/<the path, each character that is not a letter or digit
 as ->`, or `CLAUDE_CONFIG_DIR`).
-Repeat it with the same key for each other directory the work runs in. Without `--on`, the
+Use a directory only that work runs in (a worker's worktree), never the home, which every
+session there shares: `start` refuses a directory another key is counting now, naming that
+key, since its time would be counted for both. Repeat it with the same key for each other
+directory the work runs in. Without `--on`, the
 key's to-do (`todos.json`: a request or decision to-do) or mirrored card (`map.json`) is
 used. `sync.py timesheet stop C --key <key>` stops counting. Nothing is guessed from paths
 or task names.
@@ -590,13 +593,13 @@ a gap of at most 5 minutes between two lines of a transcript counts, and so does
 wait of at most 60 minutes on a tool call the agent made (a long command, a subagent),
 from the call to its result, across the lines between them. A longer gap is idle, a longer
 wait adds nothing beyond its short gaps, and a call with no result adds nothing. The spans of all a key's transcripts are merged, so time is never counted twice,
-then split by US Eastern day (`America/New_York`, whatever the config `timezone`) and
-rounded to the nearest quarter hour.
+then split by local day (the config `timezone`, default `America/New_York`) and rounded to
+the nearest quarter hour.
 
-**Posting.** Hourly, each finished day (an hour past its US Eastern midnight, once its last
+**Posting.** Hourly, each finished day (an hour past its local midnight, once its last
 tool wait is known) with a quarter hour or
-more is posted as one entry (`date`, `hours`, `description` "Active agent time: <key>") as
-the agent's login, never as the owner. `timesheet.json` keeps every entry posted, and
+more is logged as one entry (`basecamp timesheet entry create`: `date`, `hours`,
+`description` "Active agent time: <key>") as the agent's login, never as the owner. `timesheet.json` keeps every entry posted, and
 before each post the sync reads the agent's entries on that to-do or card for that day: when
 this key's entry (description "Active agent time: <key>") is already there (a post whose
 answer was lost, or a run that stopped before saving), it is only added to `timesheet.json`,
@@ -604,9 +607,12 @@ so a re-run or a restart finds that day's entry instead of posting a second one.
 key's entry on the same to-do or card that day does not stop the post: several pieces of
 work can share one to-do. A key with no to-do or card is skipped and reported once
 (`timesheet-unmapped`); its days post once it has one. A project whose timesheet refuses an
-entry (forbidden, not found or invalid) is reported once (`timesheet-refused`) until an
-entry there posts again. Every failed entry is a FAILED line and is tried again on the next
-run; other entries in the same project are still posted. When one of a key's transcripts
+entry (forbidden, not found or invalid) is reported once (`timesheet-refused`, one FAILED
+line). From then on it is tried with one entry at most once a local day, logged without
+FAILED, until an entry there posts again; then its other entries follow. A stopped key whose
+days wait only on a refusing project settles: its days stay in `timesheet.json` as
+`unposted`, and `timesheet start` with its key counts it again. Any other failed entry is a
+FAILED line and is tried again on the next run. When one of a key's transcripts
 cannot be read, that key posts nothing that run (a FAILED line) and is not settled, so no
 day is saved with part of its time; a transcript removed while it is read is skipped and
 logged. `sync.py timesheet post C
@@ -622,7 +628,8 @@ basecamp-mate checkout, `HOME` its firstmate home):
 > "Timesheets" section of `SYNC/prompts/defaults.md` into
 > `HOME/data/basecamp-sync/defaults.md`. From now on follow it: run `sync.py timesheet start`
 > with the to-do or card and the work's directory whenever work on a Basecamp to-do or card
-> starts, and `sync.py timesheet stop` when it ends. Tell me when a project refuses
+> starts (a directory only that work runs in, such as a worker's worktree, never this home),
+> and `sync.py timesheet stop` when it ends. Tell me when a project refuses
 > timesheet entries, because that project does not have timesheet tracking turned on.
 
 ## Safety bounds
@@ -1205,7 +1212,7 @@ claim, in `~/.local/state/basecamp-mate/runs/`; see "One home per project and lo
 | `pings.json` | the script | `since` (the Ping reader's first run) and, per Ping chat id, its bucket, title, URL, line cursor, owner lines recorded, acknowledgement boosts queued and done, boost counts and boosts seen, lines replied to |
 | `unmonitored.json` | the script | unmonitored key -> the first notification (or boost) and recording recorded, when, how many were seen, and the owner's decision once handled |
 | `backup.json` | the script | per backed-up file: its upload id in the backup folder, the SHA-256 of the content last uploaded, and when |
-| `timesheet.json` | `sync.py timesheet` and the script | per key (`items`): its to-do or card (`on`) and the transcript sources counted, each with `from` and `to`, and `settled` once it stopped and every day is posted (it is not read again); per key and day, each entry posted (`posted`: hours, entry id, URL, when); keys reported as unmapped (`unmapped`); projects reported as refusing entries (`refused`) |
+| `timesheet.json` | `sync.py timesheet` and the script | per key (`items`): its to-do or card (`on`) and the transcript sources counted, each with `from` and `to`, and `settled` once it stopped and every day is posted, or the rest wait on a refusing project (`unposted`: day -> hours); a settled key is not read again; per key and day, each entry posted (`posted`: hours, entry id, URL, when); keys reported as unmapped (`unmapped`); projects reported as refusing entries (`refused`: the error, and `probed`, the local day of its last try) |
 | `schedule.json` | `sync.py schedule set` | when scheduled requests are done: `default` and per to-do list or card column (`lists`), each `{"dated", "recurring"}`, as the owner answered |
 | `blocked.json` | the script | `since` (when automatic replies to blocked senders started) and, per person and conversation (`<person>:<bucket>:<thread>`), when the last automatic reply was posted (kept two days) |
 | `sync.lock` | the script | the shared state lock held by a timer run or a command |
@@ -1415,14 +1422,16 @@ and tool waits counted, a tool wait lasting to its result across the lines betwe
 result adding nothing, idle
 gaps and an over-long tool wait not,
 several transcripts merged and a symlinked copy counted once, only between start and
-stop, a day cut at US Eastern midnight whatever the config zone, rounding to quarters), off
+stop, a day cut at midnight in the config zone, New York by default, rounding to quarters), off
 by default (no call, no file, no log line, the commands refused), the dry run posting
 nothing, one entry per day and the ledger stopping a second, two keys on one to-do and day each posting, an entry already in Basecamp
 only added to the ledger, a day waiting an hour past its end, an entry post tried once, a
 settled key not read again, unmapped work
 skipped and reported once and posted once it has a to-do, a mirrored card as the target, a
-refused project reported once and its other entries still tried, failures retried each run,
-no post as the owner, `timesheet start` and `stop`, and `init --timesheet`. The `basecamp`, `gh` and `lavish-axi` CLIs are stubbed, and `init`'s systemd and check
+refused project reported once and then tried with one entry a day without FAILED lines, a
+stopped key there settling unposted and `start` counting it again, other failures retried each
+run, no post as the owner, `timesheet start` and `stop`, `start` refusing a directory another
+key is counting, and `init --timesheet`. The `basecamp`, `gh` and `lavish-axi` CLIs are stubbed, and `init`'s systemd and check
 registration sit behind a fake; tests make no network calls and touch no real home.
 `tests/test_init.py` also covers removing the retired listener service and `"listen"` key.
 `tests/test_setup.py` covers `setup` (defaults, a project URL, interactive picks, the card
@@ -1515,8 +1524,8 @@ stay in UTC.
   --key <key> --on <URL>`. Recorded once per key.
 - `timesheet-refused` (`timesheet` on): `bucket` (the project), `key`, `date`, `hours`, `url`
   (the to-do or card), `error`, `code` (the CLI's), `at`. That project's timesheet refused
-  the entry: timesheet tracking may be off there. The entry is tried again every run.
-  Recorded once per project until an entry there posts again.
+  the entry: timesheet tracking may be off there. It is tried again with one entry at most
+  once a day. Recorded once per project until an entry there posts again.
 
 ## License
 

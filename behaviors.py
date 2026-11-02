@@ -843,18 +843,20 @@ class Timesheet(Behavior):
     source, only between its start and stop: a gap of at most GAP between two events of a
     transcript is active, and so is a whole wait of at most TOOL from a tool call the agent
     made to its result; the
-    spans of all a key's transcripts are merged (time is never counted twice), split by US
-    Eastern day and rounded to the nearest quarter hour. Hourly, each finished day (TOOL past
-    its US Eastern midnight, so its last tool wait is known) with a quarter hour or more is
-    posted as one entry on the key's
+    spans of all a key's transcripts are merged (time is never counted twice), split by local
+    day (the config "timezone", default America/New_York) and rounded to the nearest quarter
+    hour. Hourly, each finished day (TOOL past its local midnight, so its last tool wait is
+    known) with a quarter hour or more is posted as one entry on the key's
     to-do or card: the "posted" ledger keeps each key's posted days, and before each post the
     to-do's or card's entries are read, so a day this login already has this key's entry for there
     (DESCRIPTION and the key, that date) is only added to the ledger; another key's entry there
     does not stop the post. A key with no to-do or card is
     skipped and reported once (a `timesheet-unmapped` record); its days post once it has one.
     A project whose timesheet refuses an entry (forbidden, not found, invalid) is reported once
-    (a `timesheet-refused` record) until an entry there posts again; a failed entry is tried
-    again on the next run. A key with a transcript that cannot be read is neither posted nor settled that
+    (a `timesheet-refused` record, one FAILED line); from then on it is tried with one entry (a
+    probe) at most once a local day, logged without FAILED, until an entry there posts again,
+    and a stopped key whose days wait only on it settles, its days kept as "unposted" and
+    logged. Any other failed entry is tried again on the next run. A key with a transcript that cannot be read is neither posted nor settled that
     run, only logged, so no day saves a partial total. Nothing is posted without a profile that is not the owner's. A dry
     run, and `sync.py timesheet post --dry-run`, only prints what it would post.
     """
@@ -868,9 +870,10 @@ class Timesheet(Behavior):
         if ts != {}:
             raise ValueError('config "timesheet" must be {}')
         self.on = True
+        self.zone = ZoneInfo(str(cfg.get("timezone") or DEFAULT_ZONE))  # the config checked "timezone" already
 
     def hours(self, item, now):
-        """{US Eastern day (YYYY-MM-DD): hours, in quarters} of the active time in `item`'s sources; days under 1/8 h
+        """{local day (YYYY-MM-DD): hours, in quarters} of the active time in `item`'s sources; days under 1/8 h
         left out."""
         spans = []
         for src in item.get("sources") or []:
@@ -883,7 +886,7 @@ class Timesheet(Behavior):
                         spans.append((a, b))
         days = {}
         for a, b in merged(spans):
-            for day, dur in local_days(a, b, EASTERN):
+            for day, dur in local_days(a, b, self.zone):
                 days[day] = days.get(day, timedelta(0)) + dur
         out = {d.isoformat(): quarters(dur) for d, dur in sorted(days.items())}
         return {d: h for d, h in out.items() if h > 0}
@@ -911,10 +914,12 @@ class Timesheet(Behavior):
         if not tracked:
             return
         now = datetime.now(timezone.utc)
-        final = (now - TOOL).astimezone(EASTERN).date().isoformat()  # days before it can gain no more time
+        today = now.astimezone(self.zone).date().isoformat()
+        final = (now - TOOL).astimezone(self.zone).date().isoformat()  # days before it can gain no more time
         posted, refused = state.setdefault("posted", {}), state.setdefault("refused", {})
         unmapped = state.setdefault("unmapped", {})
         dry, planned, me = "dry " if t.dry else "", 0, None
+        tried = set()  # refused projects whose one entry for this run has been tried
 
         def save():
             if not t.dry:
@@ -930,7 +935,7 @@ class Timesheet(Behavior):
                 continue
             due = {d: h for d, h in days.items() if d < final and d not in (posted.get(key) or {})}
             sources = item.get("sources") or []
-            stopped = bool(sources) and all(s.get("to") and local_day(s["to"], EASTERN) < final for s in sources)
+            stopped = bool(sources) and all(s.get("to") and local_day(s["to"], self.zone) < final for s in sources)
             if not due:
                 if stopped:
                     item["settled"] = True  # stopped before a final day, every day with time posted: never read again
@@ -951,9 +956,19 @@ class Timesheet(Behavior):
                 save()
             bucket, rid, url = target
             for day, h in sorted(due.items()):
+                held = refused.get(bucket)
+                probe = held is not None
+                if probe and (bucket in tried or held.get("probed") == today):
+                    if t.dry:
+                        t.log(f"dry timesheet: {key} {h:g} h on {day} waits: project {bucket}'s timesheet refused entries "
+                              f"({held.get('error')}); it is tried again once a day")
+                    continue
                 planned += 1
                 if t.dry:
-                    t.log(f"dry timesheet: post {h:g} h on {day} for {key} on {url or rid}")
+                    t.log(f"dry timesheet: {'try project ' + bucket + ' again with ' if probe else 'post '}"
+                          f"{h:g} h on {day} for {key} on {url or rid}")
+                    if probe:
+                        tried.add(bucket)
                     continue
                 if me is None:
                     try:
@@ -963,6 +978,10 @@ class Timesheet(Behavior):
                         t.log(f"timesheet: nothing posted, retrying next run: {e}")
                         return
                     me = t.acting_id()
+                if probe:
+                    tried.add(bucket)
+                    held["probed"] = today
+                    save()
                 try:
                     entry = next((e for e in t.timesheet_entries(bucket, rid, day, me)
                                   if e.get("date") == day and (e.get("creator") or {}).get("id") == me
@@ -971,15 +990,24 @@ class Timesheet(Behavior):
                     entry = entry or t.timesheet_entry(bucket, rid, day, h, f"{DESCRIPTION}{key}")
                 except Exception as e:
                     code = getattr(e, "code", None)
-                    if code in REFUSED and bucket not in refused:
-                        refused[bucket] = {"at": now_iso(), "error": str(e), "code": code, "key": key, "date": day}
+                    if probe:
+                        t.log(f"timesheet: project {bucket} still refuses entries ({key} {h:g} h on {day}: "
+                              f"{type(e).__name__}: {e}); tried again tomorrow")
+                    elif code in REFUSED:
+                        refused[bucket] = {"at": now_iso(), "error": str(e), "code": code, "key": key, "date": day,
+                                           "probed": today}
+                        tried.add(bucket)
                         t.record({"kind": "timesheet-refused", "bucket": int(bucket), "key": key, "date": day, "hours": h,
                                   "url": url, "error": str(e), "code": code, "at": refused[bucket]["at"]})
+                        t.log(f"FAILED timesheet: project {bucket}'s timesheet refused {key}'s {h:g} h on {day} on "
+                              f"{url or rid} ({type(e).__name__}: {e}); its entries are tried again once a day")
                         save()
-                    t.log(f"FAILED timesheet: {key} {h:g} h on {day} on {url or rid}, retrying next run: "
-                          f"{type(e).__name__}: {e}")
+                    else:
+                        t.log(f"FAILED timesheet: {key} {h:g} h on {day} on {url or rid}, retrying next run: "
+                              f"{type(e).__name__}: {e}")
                     continue
-                refused.pop(bucket, None)
+                if refused.pop(bucket, None) is not None:
+                    t.log(f"timesheet: project {bucket} accepts entries again")
                 posted.setdefault(key, {})[day] = {"hours": h, "entry": entry.get("id"), "url": entry.get("app_url"),
                                                    "at": now_iso()}
                 t.log(f"timesheet: {'found an entry already posted' if found else 'posted'} {h:g} h on {day} "
@@ -987,12 +1015,19 @@ class Timesheet(Behavior):
                 if stopped and all(d in posted[key] for d in due):
                     item["settled"] = True
                 save()
+            left = {d: h for d, h in due.items() if d not in (posted.get(key) or {})}
+            if stopped and left and bucket in refused and not t.dry:
+                # Stopped, and its days wait only on a refusing project: never read again; they stay listed, unposted.
+                item.update(settled=True, unposted=left)
+                t.log(f"timesheet: {key} stopped with {sum(left.values()):g} h on {', '.join(sorted(left))} not posted: "
+                      f"project {bucket} refuses entries; sync.py timesheet start --key {key} counts it again")
+                save()
         if t.dry and not planned:
             t.log("dry timesheet: nothing to post")
 
 
 REFUSED = ("forbidden", "not_found", "validation")  # basecamp CLI error codes: the project's timesheet refuses the entry
-EASTERN = ZoneInfo("America/New_York")  # the day active time is counted and posted by
+DEFAULT_ZONE = "America/New_York"  # the day active time is counted and posted by, without a config "timezone"
 GAP, TOOL = timedelta(minutes=5), timedelta(minutes=60)  # the longest active gap between events, and on a tool call
 DESCRIPTION = "Active agent time: "  # what each entry's description starts with, before its key
 
@@ -1738,7 +1773,7 @@ def inbox_note(rec, account, project):
         what = (f"Timesheet: project {rec.get('bucket')} refused your {rec.get('hours'):g} h on {rec.get('date')} for "
                 f"{key} ({rec.get('error')})")
         facts = ["timesheet tracking may be off in that project, or your login may not log time there",
-                 "reported once until an entry posts there again; each entry is tried again every hour"]
+                 "reported once until an entry posts there again; the project is tried again once a day"]
         url = rec.get("url")
     else:
         rid = hashlib.sha256(json.dumps(rec, sort_keys=True).encode()).hexdigest()[:16]
