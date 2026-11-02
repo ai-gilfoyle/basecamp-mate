@@ -46,6 +46,7 @@ class TimesheetStub(Stub):
                 return SimpleNamespace(stdout=json.dumps({"ok": False, "code": self.refuse, "error": "Resource not found",
                                                           "retryable": self.retryable}), stderr="", returncode=1)
             data = {"id": 7000 + len(self.calls), "app_url": "https://3.basecamp.com/1111111/entries/1"}
+            self.listed.append({**json.loads(args[4]), "id": data["id"], "creator": {"id": self.me}})  # Basecamp lists it
             return SimpleNamespace(stdout=json.dumps({"ok": True, "data": data}), stderr="", returncode=0)
         return super().__call__(cmd, **kw)
 
@@ -310,6 +311,19 @@ class Posting(TimesheetBase):
                       self.stub.calls)
         self.assertEqual(self.state()["posted"]["fix-import"][DAY]["entry"], 8123)
         self.assertIn(f"timesheet: found an entry already posted 1 h on {DAY} for fix-import", self.log())
+
+    def test_two_keys_on_one_to_do_and_day_both_post(self):
+        # Several pieces of work share one to-do (e.g. one for work without its own card): each gets its own entry.
+        self.track(key="task-a")
+        self.track(key="task-b")
+        self.post()
+        self.assertEqual(sorted(b["description"] for _, b in self.stub.entries()),
+                         ["Active agent time: task-a", "Active agent time: task-b"])
+        self.assertEqual({p for p, _ in self.stub.entries()}, {f"/projects/{OTHER}/recordings/4242/timesheet/entries.json"})
+        self.assertEqual(sorted(self.state()["posted"]), ["task-a", "task-b"])
+        self.assertNotIn("found an entry already posted", self.log())
+        self.post()
+        self.assertEqual(len(self.stub.entries()), 2)
 
     def test_an_entry_by_someone_else_or_another_feature_does_not_stop_the_post(self):
         self.track()

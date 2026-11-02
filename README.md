@@ -598,9 +598,11 @@ tool wait is known) with a quarter hour or
 more is posted as one entry (`date`, `hours`, `description` "Active agent time: <key>") as
 the agent's login, never as the owner. `timesheet.json` keeps every entry posted, and
 before each post the sync reads the agent's entries on that to-do or card for that day: when
-one whose description starts with "Active agent time:" is already there (a post whose answer
-was lost, or a run that stopped before saving), it is only added to `timesheet.json`, so a
-re-run or a restart finds that day's entry instead of posting a second one. A key with no to-do or card is skipped and reported once
+this key's entry (description "Active agent time: <key>") is already there (a post whose
+answer was lost, or a run that stopped before saving), it is only added to `timesheet.json`,
+so a re-run or a restart finds that day's entry instead of posting a second one. Another
+key's entry on the same to-do or card that day does not stop the post: several pieces of
+work can share one to-do. A key with no to-do or card is skipped and reported once
 (`timesheet-unmapped`); its days post once it has one. A project whose timesheet refuses an
 entry (forbidden, not found or invalid) is reported once (`timesheet-refused`) until an
 entry there posts again. Every failed entry is a FAILED line and is tried again on the next
@@ -1412,7 +1414,7 @@ gaps and an over-long tool wait not,
 several transcripts merged and a symlinked copy counted once, only between start and
 stop, a day cut at US Eastern midnight whatever the config zone, rounding to quarters), off
 by default (no call, no file, no log line, the commands refused), the dry run posting
-nothing, one entry per day and the ledger stopping a second, an entry already in Basecamp
+nothing, one entry per day and the ledger stopping a second, two keys on one to-do and day each posting, an entry already in Basecamp
 only added to the ledger, a day waiting an hour past its end, an entry post tried once, a
 settled key not read again, unmapped work
 skipped and reported once and posted once it has a to-do, a mirrored card as the target, a

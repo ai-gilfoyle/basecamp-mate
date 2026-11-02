@@ -848,8 +848,9 @@ class Timesheet(Behavior):
     its US Eastern midnight, so its last tool wait is known) with a quarter hour or more is
     posted as one entry on the key's
     to-do or card: the "posted" ledger keeps each key's posted days, and before each post the
-    to-do's or card's entries are read, so a day this login already has an entry for there
-    (DESCRIPTION, that date) is only added to the ledger. A key with no to-do or card is
+    to-do's or card's entries are read, so a day this login already has this key's entry for there
+    (DESCRIPTION and the key, that date) is only added to the ledger; another key's entry there
+    does not stop the post. A key with no to-do or card is
     skipped and reported once (a `timesheet-unmapped` record); its days post once it has one.
     A project whose timesheet refuses an entry (forbidden, not found, invalid) is reported once
     (a `timesheet-refused` record) until an entry there posts again; a failed entry is tried
@@ -960,7 +961,7 @@ class Timesheet(Behavior):
                 try:
                     entry = next((e for e in t.timesheet_entries(bucket, rid, day, me)
                                   if e.get("date") == day and (e.get("creator") or {}).get("id") == me
-                                  and str(e.get("description") or "").startswith(DESCRIPTION)), None)
+                                  and str(e.get("description") or "").strip() == f"{DESCRIPTION}{key}"), None)
                     found = entry is not None
                     entry = entry or t.timesheet_entry(bucket, rid, day, h, f"{DESCRIPTION}{key}")
                 except Exception as e:
