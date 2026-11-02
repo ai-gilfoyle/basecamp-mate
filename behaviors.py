@@ -854,9 +854,9 @@ class Timesheet(Behavior):
     skipped and reported once (a `timesheet-unmapped` record); its days post once it has one.
     A project whose timesheet refuses an entry (forbidden, not found, invalid) is reported once
     (a `timesheet-refused` record, one FAILED line); from then on it is tried with one entry (a
-    probe) at most once a local day, logged without FAILED, until an entry there posts again,
-    and a stopped key whose days wait only on it settles, its days kept as "unposted" and
-    logged. Any other failed entry is tried again on the next run. A key with a transcript that cannot be read is neither posted nor settled that
+    probe) at most once a local day, logged without FAILED, until an entry there posts again;
+    a stopped key whose days wait only on it keeps them as "unposted" (logged once), is not
+    read again, and posts them with the project's daily probe, settling once all are posted. Any other failed entry is tried again on the next run. A key with a transcript that cannot be read is neither posted nor settled that
     run, only logged, so no day saves a partial total. Nothing is posted without a profile that is not the owner's. A dry
     run, and `sync.py timesheet post --dry-run`, only prints what it would post.
     """
@@ -929,7 +929,7 @@ class Timesheet(Behavior):
             if item.get("settled"):
                 continue
             try:
-                days = self.hours(item, now)
+                days = item.get("unposted") or self.hours(item, now)
             except OSError as e:  # a transcript unreadable now: post and settle nothing, so no day saves a partial total
                 t.log(f"FAILED timesheet: {key} not posted, a transcript could not be read, retrying next run: {e}")
                 continue
@@ -939,6 +939,7 @@ class Timesheet(Behavior):
             if not due:
                 if stopped:
                     item["settled"] = True  # stopped before a final day, every day with time posted: never read again
+                    item.pop("unposted", None)
                     save()
                 continue
             target = self.target(key, item)
@@ -1014,13 +1015,14 @@ class Timesheet(Behavior):
                       f"for {key} on {url or rid}")
                 if stopped and all(d in posted[key] for d in due):
                     item["settled"] = True
+                    item.pop("unposted", None)
                 save()
             left = {d: h for d, h in due.items() if d not in (posted.get(key) or {})}
-            if stopped and left and bucket in refused and not t.dry:
-                # Stopped, and its days wait only on a refusing project: never read again; they stay listed, unposted.
-                item.update(settled=True, unposted=left)
+            if stopped and left and bucket in refused and not t.dry and "unposted" not in item:
+                # Stopped, and its days wait only on a refusing project: kept, so its transcripts are not read again.
+                item["unposted"] = left
                 t.log(f"timesheet: {key} stopped with {sum(left.values()):g} h on {', '.join(sorted(left))} not posted: "
-                      f"project {bucket} refuses entries; sync.py timesheet start --key {key} counts it again")
+                      f"project {bucket} refuses entries; they are tried with it once a day")
                 save()
         if t.dry and not planned:
             t.log("dry timesheet: nothing to post")

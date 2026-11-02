@@ -3,7 +3,7 @@
 The basecamp CLI is stubbed and the Claude Code transcripts are files in a temporary directory; nothing touches the
 network.
 """
-import io, json, os, sys, unittest
+import io, json, os, shutil, sys, unittest
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -411,23 +411,34 @@ class Posting(TimesheetBase):
         self.assertEqual(len(self.state()["posted"]["fix-import"]), 2)
         self.assertEqual(self.state()["refused"], {})
 
-    def test_a_stopped_key_in_a_refused_project_settles_unposted_and_start_counts_it_again(self):
+    def test_a_stopped_key_in_a_refused_project_keeps_its_days_and_posts_them_with_the_daily_try(self):
         self.track(to=f"{DAY}T23:00:00Z")
         self.stub.refuse = "forbidden"
         self.post()
         item = self.state()["items"]["fix-import"]
-        self.assertEqual((item["settled"], item["unposted"]), (True, {DAY: 1.0}))
+        self.assertEqual(item["unposted"], {DAY: 1.0})
+        self.assertNotIn("settled", item)
         self.assertIn(f"timesheet: fix-import stopped with 1 h on {DAY} not posted: project {OTHER} refuses entries",
                       self.log())
+        self.post()
+        self.assertEqual(len(self.stub.entries()), 1)  # tried again only the next day
         self.refused_yesterday()
+        self.post()
+        self.assertEqual(len(self.stub.entries()), 2)  # the daily try
+        self.assertEqual(self.log().count("stopped with"), 1)
+        self.assertEqual(self.log().count("FAILED"), 1)
+        shutil.rmtree(self.work)  # its days come from "unposted", not the transcripts
+        self.stub.refuse = None
+        self.refused_yesterday()
+        self.post()
+        self.assertEqual([b["date"] for _, b in self.stub.entries()[2:]], [DAY])
+        self.assertEqual(self.state()["posted"]["fix-import"][DAY]["hours"], 1.0)
+        item = self.state()["items"]["fix-import"]
+        self.assertTrue(item["settled"])
+        self.assertNotIn("unposted", item)
         self.stub.calls.clear()
         self.post()
         self.assertEqual(self.stub.calls, [])  # settled: never read or tried again
-        self.stub.refuse = None
-        self.assertEqual(self.cli("timesheet", "start", "--key", "fix-import", "--workdir", self.tmp)[0], 0)
-        self.assertNotIn("unposted", self.state()["items"]["fix-import"])
-        self.post()
-        self.assertEqual([b["date"] for _, b in self.stub.entries()], [DAY])
 
     def test_other_failures_are_retried_every_run_and_not_reported_as_refused(self):
         self.track()

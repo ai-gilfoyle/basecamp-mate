@@ -610,8 +610,9 @@ work can share one to-do. A key with no to-do or card is skipped and reported on
 entry (forbidden, not found or invalid) is reported once (`timesheet-refused`, one FAILED
 line). From then on it is tried with one entry at most once a local day, logged without
 FAILED, until an entry there posts again; then its other entries follow. A stopped key whose
-days wait only on a refusing project settles: its days stay in `timesheet.json` as
-`unposted`, and `timesheet start` with its key counts it again. Any other failed entry is a
+days wait only on a refusing project keeps them in `timesheet.json` as `unposted`, so its
+transcripts are not read again; they go with that daily try, and the key settles once they all
+post. Any other failed entry is a
 FAILED line and is tried again on the next run. When one of a key's transcripts
 cannot be read, that key posts nothing that run (a FAILED line) and is not settled, so no
 day is saved with part of its time; a transcript removed while it is read is skipped and
@@ -1212,7 +1213,7 @@ claim, in `~/.local/state/basecamp-mate/runs/`; see "One home per project and lo
 | `pings.json` | the script | `since` (the Ping reader's first run) and, per Ping chat id, its bucket, title, URL, line cursor, owner lines recorded, acknowledgement boosts queued and done, boost counts and boosts seen, lines replied to |
 | `unmonitored.json` | the script | unmonitored key -> the first notification (or boost) and recording recorded, when, how many were seen, and the owner's decision once handled |
 | `backup.json` | the script | per backed-up file: its upload id in the backup folder, the SHA-256 of the content last uploaded, and when |
-| `timesheet.json` | `sync.py timesheet` and the script | per key (`items`): its to-do or card (`on`) and the transcript sources counted, each with `from` and `to`, and `settled` once it stopped and every day is posted, or the rest wait on a refusing project (`unposted`: day -> hours); a settled key is not read again; per key and day, each entry posted (`posted`: hours, entry id, URL, when); keys reported as unmapped (`unmapped`); projects reported as refusing entries (`refused`: the error, and `probed`, the local day of its last try) |
+| `timesheet.json` | `sync.py timesheet` and the script | per key (`items`): its to-do or card (`on`) and the transcript sources counted, each with `from` and `to`, and `settled` once it stopped and every day is posted; the days of a stopped key that wait on a refusing project (`unposted`: day -> hours, posted from there without reading its transcripts); a settled key is not read again; per key and day, each entry posted (`posted`: hours, entry id, URL, when); keys reported as unmapped (`unmapped`); projects reported as refusing entries (`refused`: the error, and `probed`, the local day of its last try) |
 | `schedule.json` | `sync.py schedule set` | when scheduled requests are done: `default` and per to-do list or card column (`lists`), each `{"dated", "recurring"}`, as the owner answered |
 | `blocked.json` | the script | `since` (when automatic replies to blocked senders started) and, per person and conversation (`<person>:<bucket>:<thread>`), when the last automatic reply was posted (kept two days) |
 | `sync.lock` | the script | the shared state lock held by a timer run or a command |
@@ -1429,7 +1430,7 @@ only added to the ledger, a day waiting an hour past its end, an entry post trie
 settled key not read again, unmapped work
 skipped and reported once and posted once it has a to-do, a mirrored card as the target, a
 refused project reported once and then tried with one entry a day without FAILED lines, a
-stopped key there settling unposted and `start` counting it again, other failures retried each
+stopped key there keeping its days unposted, posting them with the daily try and then settling, other failures retried each
 run, no post as the owner, `timesheet start` and `stop`, `start` refusing a directory another
 key is counting, and `init --timesheet`. The `basecamp`, `gh` and `lavish-axi` CLIs are stubbed, and `init`'s systemd and check
 registration sit behind a fake; tests make no network calls and touch no real home.
