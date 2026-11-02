@@ -27,6 +27,7 @@ class TimesheetStub(Stub):
         self.refuse = None  # an error code the entry post fails with, e.g. "not_found"
         self.listed = []  # the timesheet entries `timesheet item` lists
         self.retryable = False  # whether a refused entry post says it may be retried
+        self.gone = set()  # recording ids whose entry post fails with "not_found"
 
     def __call__(self, cmd, **kw):
         args = cmd[3:-3]
@@ -42,8 +43,9 @@ class TimesheetStub(Stub):
             return SimpleNamespace(stdout=json.dumps({"ok": True, "data": self.listed}), stderr="", returncode=0)
         if args[:3] == ["timesheet", "entry", "create"]:
             self.calls.append([*args, "-p", cmd[-2]])
-            if self.refuse:
-                return SimpleNamespace(stdout=json.dumps({"ok": False, "code": self.refuse, "error": "Resource not found",
+            refuse = "not_found" if int(args[3]) in self.gone else self.refuse
+            if refuse:
+                return SimpleNamespace(stdout=json.dumps({"ok": False, "code": refuse, "error": "Resource not found",
                                                           "retryable": self.retryable}), stderr="", returncode=1)
             data = {"id": 7000 + len(self.calls), "app_url": "https://3.basecamp.com/1111111/entries/1"}
             self.listed.append({**entry_body(args), "id": data["id"], "creator": {"id": self.me}})  # Basecamp lists it
@@ -98,11 +100,12 @@ class TimesheetBase(Base):
             f.write("not json\n")
         return path
 
-    def track(self, key="fix-import", on=True, frm="2026-10-01T00:00:00Z", to=None, path=None):
+    def track(self, key="fix-import", on=True, frm="2026-10-01T00:00:00Z", to=None, path=None, rec=4242):
         state = self.state()
         item = {"sources": [{"path": path or self.work, "from": frm, **({"to": to} if to else {})}]}
         if on:
-            item["on"] = {"bucket": int(OTHER), "recording": 4242, "type": "Todo", "title": "Fix the import", "url": TODO_URL}
+            item["on"] = {"bucket": int(OTHER), "recording": rec, "type": "Todo", "title": "Fix the import",
+                          "url": TODO_URL.replace("4242", str(rec))}
         state.setdefault("items", {})[key] = item
         self.side("timesheet.json", state)
 
@@ -280,15 +283,21 @@ class Posting(TimesheetBase):
         self.assertEqual(self.state()["posted"]["fix-import"][DAY]["entry"], 8124)
 
     def test_an_unreadable_transcript_defers_the_key_and_the_full_hours_post_once_it_reads(self):
-        os.makedirs(os.path.join(self.work, "s2.jsonl"))  # read fails (IsADirectoryError), also when run as root
+        s2 = self.transcript("s2", *[ev(f"15:{m:02d}") for m in range(0, 31, 3)])  # 15:00-15:30: with s1, 1.5 h
         self.track(to=f"{DAY}T23:00:00Z")
-        self.post()
+        real = open
+
+        def unreadable(f, *a, **kw):  # a permission error, also when run as root
+            if f == s2:
+                raise PermissionError(13, "Permission denied", f)
+            return real(f, *a, **kw)
+
+        with mock.patch("builtins.open", unreadable):
+            self.post()
         self.assertEqual(self.stub.entries(), [])
         self.assertNotIn("fix-import", self.state().get("posted") or {})
         self.assertNotIn("settled", self.state()["items"]["fix-import"])
         self.assertIn("FAILED timesheet: fix-import not posted, a transcript could not be read", self.log())
-        os.rmdir(os.path.join(self.work, "s2.jsonl"))
-        self.transcript("s2", *[ev(f"15:{m:02d}") for m in range(0, 31, 3)])  # 15:00-15:30: with s1, 1.5 h
         self.post()
         self.post()
         self.assertEqual([b["hours"] for _, b in self.stub.entries()], ["1.5"])
@@ -383,7 +392,7 @@ class Posting(TimesheetBase):
         self.transcript("s2", *[ev(f"2026-10-21T14:{m:02d}:00Z") for m in range(0, 31, 3)])  # a second day, 0.5 h
         self.track()
         self.track(key="other-task")  # another to-do in the same project
-        self.stub.refuse = "not_found"
+        self.stub.refuse = "forbidden"
         self.post()
         self.assertEqual(len(self.stub.entries()), 1)  # the project's other entries wait
         self.assertEqual(self.log().count("FAILED"), 1)
@@ -393,7 +402,7 @@ class Posting(TimesheetBase):
         self.assertEqual(len(self.stub.entries()), 1)  # tried again only the next day
         recs = [r for r in self.records() if r["kind"] == "timesheet-refused"]
         self.assertEqual(len(recs), 1)
-        self.assertEqual((recs[0]["bucket"], recs[0]["code"], recs[0]["date"]), (int(OTHER), "not_found", DAY))
+        self.assertEqual((recs[0]["bucket"], recs[0]["code"], recs[0]["date"]), (int(OTHER), "forbidden", DAY))
         _, body = behaviors.inbox_note(recs[0], "1111111", PROJECT)
         self.assertIn("timesheet tracking may be off in that project", body)
         self.refused_yesterday()
@@ -439,6 +448,71 @@ class Posting(TimesheetBase):
         self.stub.calls.clear()
         self.post()
         self.assertEqual(self.stub.calls, [])  # settled: never read or tried again
+
+    def test_a_missing_to_do_is_reported_and_tried_daily_alone_while_the_project_still_posts(self):
+        self.track(key="a-task")
+        self.track(key="b-task", rec=5150)  # another to-do in the same project
+        self.stub.gone = {4242}
+        self.post()
+        self.post()
+        self.assertEqual([(r, b["description"]) for (_, r), b in self.stub.entries()],
+                         [(4242, "Active agent time: a-task"), (5150, "Active agent time: b-task")])
+        self.assertEqual(sorted(self.state()["posted"]), ["b-task"])
+        self.assertEqual(self.state()["refused"], {})
+        recs = [r for r in self.records() if r["kind"] == "timesheet-missing"]
+        self.assertEqual([(r["key"], r["code"], r["date"]) for r in recs], [("a-task", "not_found", DAY)])
+        _, body = behaviors.inbox_note(recs[0], "1111111", PROJECT)
+        self.assertIn("timesheet start --key a-task --on", body)
+        self.assertEqual(self.log().count("FAILED"), 1)
+        state = self.state()
+        state["missing"]["a-task"]["probed"] = "2026-10-01"
+        self.side("timesheet.json", state)
+        self.post()
+        self.assertEqual(len(self.stub.entries()), 3)  # one try a day
+        self.assertIn("timesheet: a-task's to-do or card still refuses entries", self.log())
+        self.assertEqual(self.log().count("FAILED"), 1)
+        self.assertEqual(self.cli("timesheet", "start", "--key", "a-task", "--on", TODO_URL.replace("4242", "5150"),
+                                  "--workdir", self.tmp)[0], 0)
+        self.assertNotIn("a-task", self.state()["missing"])
+        self.post()
+        self.assertEqual(sorted(self.state()["posted"]), ["a-task", "b-task"])
+
+    def test_an_unreadable_directory_defers_the_key_until_it_reads(self):
+        sub = os.path.join(self.work, "s1", "subagents")
+        self.transcript("agent-1", *[ev(f"15:{m:02d}") for m in range(0, 31, 3)], where=sub)  # with s1, 1.5 h
+        self.track(to=f"{DAY}T23:00:00Z")
+        real = os.scandir
+
+        def scandir(p="."):
+            if p == sub:
+                raise PermissionError(13, "Permission denied", p)
+            return real(p)
+
+        with mock.patch.object(tools.os, "scandir", scandir):
+            self.post()
+        self.assertEqual(self.stub.entries(), [])
+        self.assertNotIn("settled", self.state()["items"]["fix-import"])
+        self.assertIn("FAILED timesheet: fix-import not posted, a transcript could not be read", self.log())
+        self.post()
+        self.assertEqual([b["hours"] for _, b in self.stub.entries()], ["1.5"])
+
+    def test_start_keeps_a_stopped_keys_unposted_days_and_adds_its_new_days(self):
+        self.track(to=f"{DAY}T23:00:00Z")
+        self.stub.refuse = "forbidden"
+        self.post()
+        shutil.rmtree(self.work)
+        self.assertEqual(self.cli("timesheet", "start", "--key", "fix-import", "--workdir", self.tmp)[0], 0)
+        self.assertEqual(self.state()["items"]["fix-import"]["unposted"], {DAY: 1.0})
+        state = self.state()
+        new = os.path.join(self.tmp, "w2")
+        state["items"]["fix-import"]["sources"][-1].update(path=new, **{"from": "2026-10-21T00:00:00Z"})
+        self.side("timesheet.json", state)
+        self.transcript("s3", *[ev(f"2026-10-21T14:{m:02d}:00Z") for m in range(0, 31, 3)], where=new)  # 0.5 h
+        self.stub.refuse = None
+        self.refused_yesterday()
+        self.post()
+        self.assertEqual({k: v["hours"] for k, v in self.state()["posted"]["fix-import"].items()},
+                         {DAY: 1.0, "2026-10-21": 0.5})
 
     def test_other_failures_are_retried_every_run_and_not_reported_as_refused(self):
         self.track()

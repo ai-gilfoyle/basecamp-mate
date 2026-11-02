@@ -34,7 +34,7 @@ post-message) posts nothing when no profile is set, or when the profile signs in
 the owner, and `--dry-run` only logs. All state lives in the directory holding the
 config.
 """
-import base64, contextlib, csv, fcntl, glob, hashlib, html, json, os, re, subprocess, time, tomllib
+import base64, contextlib, csv, fcntl, hashlib, html, json, os, re, subprocess, time, tomllib
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -2442,8 +2442,8 @@ class Tools:
             item = state.setdefault("items", {}).setdefault(key, {"sources": []})
             if target:
                 item["on"] = target
+                state.get("missing", {}).pop(key, None)
             item.pop("settled", None)
-            item.pop("unposted", None)
             added = []
             for src in dict.fromkeys(sources):
                 if not any(s["path"] == src and not s.get("to") for s in item["sources"]):
@@ -2497,13 +2497,18 @@ class Tools:
     def transcript_events(self, path, since):
         """The events of each Claude Code transcript under directory `path` changed at or after `since`: {session file
         name: ([event time, ...] sorted, [(tool call time, its result's time), ...])}. A missing directory has none, and a
-        file removed while it is read is skipped and logged; any other read failure (OSError) is raised.
+        file removed while it is read is skipped and logged; any other read or directory scan failure (OSError) is
+        raised.
 
         Each line with a "timestamp" is an event. A tool wait runs from an assistant line's tool_use to the line with its
         tool_result, across the events between them; a call with no result yet has no wait.
         A session is keyed by its file name, so one seen under two paths (a symlinked home) counts once.
         """
-        files = sorted(glob.glob(os.path.join(glob.escape(path), "**", "*.jsonl"), recursive=True))
+        def scan_failed(e):
+            if not (isinstance(e, FileNotFoundError) and e.filename == path):  # only a source not made yet has none
+                raise e
+        files = sorted(os.path.join(d, n) for d, dirs, names in os.walk(path, onerror=scan_failed, followlinks=True)
+                       for n in names if n.endswith(".jsonl") and not n.startswith("."))
         out = {}
         for f in files:
             try:

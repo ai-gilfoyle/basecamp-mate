@@ -342,7 +342,9 @@ that read.
   ends. `timesheet post --dry-run` prints what would be posted. A `timesheet-unmapped`
   record is time with no to-do or card: name one with `timesheet start --on`. A
   `timesheet-refused` record is a project whose timesheet refused an entry: tell the
-  captain timesheet tracking is off there; the sync tries it again once a day.
+  captain timesheet tracking is off there; the sync tries it again once a day. A
+  `timesheet-missing` record is a key whose to-do or card was not found: name another
+  with `timesheet start --on`.
 - To put a question or decision to the owner in chat (only when `ask_chat` is set), post
   one per line with
   `python3 $SYNC/sync.py ask --home <home> --config <home>/data/basecamp-sync/config.json --body-file <file>`;

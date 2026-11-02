@@ -295,6 +295,9 @@ finished day; you say what you work on, and where:
   project does not have timesheet tracking turned on (or your login cannot log time there).
   The sync tries that project again once a day, so its entries, also those of stopped keys,
   post once they fix it.
+- `timesheet-missing`: the key's to-do or card was not found (deleted, or your login cannot
+  see it). Name the right one with `timesheet start --key <key> --on <URL> --workdir <dir>`;
+  if you do not know it, ask the captain.
 
 ## Reading Basecamp yourself
 
