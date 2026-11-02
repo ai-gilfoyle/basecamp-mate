@@ -161,8 +161,8 @@ where the record was made, through `python3 SYNC/sync.py reply C --recording <id
 - `timesheet-unmapped` (`timesheet` config): your active time on `key` (`days`: day -> hours)
   is not posted because no to-do or card is named for it (reported once per key).
 - `timesheet-refused` (`timesheet` config): project `bucket`'s timesheet refused the entry
-  for `key` on `date` (`error`, `code`); nothing more is posted there until `sync.py
-  timesheet retry` (reported once).
+  for `key` on `date` (`error`, `code`); the sync tries it again every run (reported once
+  per project until an entry there posts).
 - `comment`, `question`, `approval` (card mirror only): their comment or 👍 on a card.
 - A FAILED line in `sync.log`: read it. A token failure needs `basecamp auth login -P firstmate`,
   which only the captain can do. `FAILED duplicate run` means another home on this computer watches
@@ -197,7 +197,7 @@ defaults: what the sync enforces is changed in the config, and only when the cap
 
 - Post, comment, complete or answer in Basecamp only through `sync.py` and its commands
   (`reply`, `ask`, `answer`, `todo create|track|comment|complete|subtask`, `decide`, `post-message`;
-  `unmonitored handle|forget`, `watch|unwatch` and `timesheet start|stop|retry` only edit local state). Never
+  `unmonitored handle|forget`, `watch|unwatch` and `timesheet start|stop` only edit local state). Never
   use the `basecamp` CLI or basecamp-axi to write directly, and never delete, trash or archive
   anything. basecamp-axi, when installed, is for your own reading of Basecamp (the defaults
   file says how); the sync never uses it.

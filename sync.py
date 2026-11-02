@@ -70,8 +70,8 @@ Usage: sync.py --home <home> --config <config.json> [--all] [--dry-run] [--inclu
        sync.py post-message --home <home> --config <config.json> --subject <text> --body-file <file> [--dry-run]
        sync.py unmonitored list|handle|forget --home <home> --config <config.json> [--key <key>] [--decision <text>] [--dry-run]
        sync.py backup --home <home> --config <config.json> [--dry-run]
-       sync.py timesheet start --home <home> --config <config.json> --key <key> [--on <to-do or card URL or id>] [--project <id>] [--workdir <dir>]... [--transcripts <file or dir>]... [--dry-run]
-       sync.py timesheet stop|post|retry --home <home> --config <config.json> [--key <key>] [--project <id>] [--dry-run]
+       sync.py timesheet start --home <home> --config <config.json> --key <key> [--on <to-do or card URL>] --workdir <dir>... [--dry-run]
+       sync.py timesheet stop|post --home <home> --config <config.json> [--key <key>] [--dry-run]
        sync.py behaviors --home <home> --config <config.json>
        sync.py access --home <home> --config <config.json>      (who gets through to the agent, and where)
        sync.py setup [--answers <file.json>] [--yes]      (guided; also bin/basecamp-mate setup)
@@ -342,34 +342,27 @@ def timesheet_cli(argv, runner):
     sub = argv[:1][0] if argv else None
     descs = {"start": "Count the agent's active time on a piece of work from now, for the timesheet of its to-do or card.",
              "stop": "Stop counting the agent's active time on a piece of work.",
-             "post": "Post the finished days' active time that is not posted yet now (--dry-run prints what it would post).",
-             "retry": "Try a project's timesheet again after it refused an entry."}
+             "post": "Post the finished days' active time that is not posted yet now (--dry-run prints what it would post)."}
     if sub not in descs:
-        print("usage: sync.py timesheet {start,stop,post,retry} --home <home> --config <config.json> ...", file=sys.stderr)
+        print("usage: sync.py timesheet {start,stop,post} --home <home> --config <config.json> ...", file=sys.stderr)
         return 2
     ap = common(f"sync.py timesheet {sub}", descs[sub])
     if sub in ("start", "stop"):
         ap.add_argument("--key", required=True, help="a stable key for the work, e.g. the task id")
     if sub == "start":
-        ap.add_argument("--on", help="the to-do's or card's URL or id its entries go on (default: the to-do tracked "
+        ap.add_argument("--on", help="the to-do's or card's URL its entries go on (default: the to-do tracked "
                                      "under --key, else its mirrored card)")
-        ap.add_argument("--project", help="the project of an --on id (default: the URL's, else the configured project)")
         ap.add_argument("--workdir", action="append", default=[],
                         help="the directory the work's Claude Code session runs in (repeatable)")
-        ap.add_argument("--transcripts", action="append", default=[],
-                        help="a Claude Code transcript (.jsonl) or a directory of them (repeatable)")
-    if sub == "retry":
-        ap.add_argument("--project", required=True, help="the project id whose timesheet refused entries")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv[1:])
     s = Sync(a.home, a.config, runner=runner)
     if not s.behaviors["timesheet"].on:
         print('sync.py timesheet: no "timesheet" in the config: add "timesheet": {} (or init --timesheet)', file=sys.stderr)
         return 2
-    calls = {"start": lambda s: s.timesheet_start(a.key, a.on, a.project, a.workdir, a.transcripts),
+    calls = {"start": lambda s: s.timesheet_start(a.key, a.on, a.workdir),
              "stop": lambda s: s.timesheet_stop(a.key),
-             "post": lambda s: s.behaviors["timesheet"].run(),
-             "retry": lambda s: s.timesheet_retry(a.project)}
+             "post": lambda s: s.behaviors["timesheet"].run()}
     return command(a, f"timesheet {sub}", calls[sub], runner)
 
 

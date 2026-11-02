@@ -2404,29 +2404,26 @@ class Tools:
 
     # --- timesheet: the work the agent counts its active time on (timesheet.json) ---
 
-    def timesheet_start(self, key, on=None, project=None, workdirs=(), transcripts=()):
-        """Count the agent's active time on `key` from now, in the Claude Code transcripts of `workdirs` and `transcripts`.
+    def timesheet_start(self, key, on=None, workdirs=()):
+        """Count the agent's active time on `key` from now, in the Claude Code transcripts of `workdirs`.
 
-        `on` (a to-do's or card's URL or id, in `project`, default the URL's, else the
-        configured project) is the recording its timesheet entries go on; it is read once to
-        check it is a to-do or a card. Without it, `key` is looked up when entries are posted:
-        a to-do tracked under it (todos.json), else its mirrored card (map.json). A workdir is
-        the directory the work's Claude Code session runs in; its transcripts are in
-        CLAUDE_CONFIG_DIR (default ~/.claude)/projects/<the path with each character that is
-        not a letter or digit as ->. A transcript path is one .jsonl file or a directory of
-        them. A repeat for a source already counted adds nothing; a new one, or a stopped one,
-        starts counting from now. Writes nothing to Basecamp.
+        `on` (a to-do's or card's URL) is the recording its timesheet entries go on; it is
+        read once to check it is a to-do or a card. Without it, `key` is looked up when
+        entries are posted: a to-do tracked under it (todos.json), else its mirrored card
+        (map.json). A workdir is the directory the work's Claude Code session runs in; its
+        transcripts are in CLAUDE_CONFIG_DIR (default ~/.claude)/projects/<the path with each
+        character that is not a letter or digit as ->. A repeat for a source already counted
+        adds nothing; a new one, or a stopped one, starts counting from now. Writes nothing to
+        Basecamp.
         """
-        sources = [os.path.abspath(p) for p in transcripts]
-        for w in workdirs:
-            sources += claude_transcript_dirs(w)
+        sources = [d for w in workdirs for d in claude_transcript_dirs(w)]
         if not str(key).strip():
             raise ValueError("a timesheet key is needed")
         if not sources:
-            raise ValueError("give --workdir or --transcripts: where the work's Claude Code transcripts are")
+            raise ValueError("give --workdir: the directory the work's Claude Code session runs in")
         target = None
         if on is not None:
-            bucket, rid = parse_recording(on, self.account, project or self.project)
+            bucket, rid = parse_recording(on, self.account)
             rec = self.recording(rid, bucket)
             if rec.get("type") not in ("Todo", "Kanban::Card"):
                 raise ValueError(f"{on!r} is a {rec.get('type') or 'recording'}, not a to-do or card")
@@ -2469,20 +2466,10 @@ class Tools:
         self.log(f"timesheet stop {key}: {len(open_)} source(s) stopped")
         return True
 
-    def timesheet_retry(self, project):
-        """Forget that project `project`'s timesheet refused entries, so the next post tries its entries again."""
-        with self.locked("timesheet.json"):
-            state = self.load("timesheet.json", {})
-            if str(project) not in (state.get("refused") or {}):
-                raise ValueError(f"project {project} has no refused timesheet entries in timesheet.json")
-            if self.dry:
-                self.log(f"dry timesheet retry: project {project}")
-                return False
-            del state["refused"][str(project)]
-            (state.get("failures") or {}).pop(str(project), None)
-            self.save_json("timesheet.json", state)
-        self.log(f"timesheet retry: project {project}'s entries are posted again from the next run")
-        return True
+    def timesheet_entries(self, bucket, recording, date, person):
+        """The timesheet entries `person` logged on day `date` (YYYY-MM-DD) on to-do or card `recording` in `bucket`."""
+        return self.bc("timesheet", "item", str(recording), "--person", str(person), "--start", date, "--end", date,
+                       project=bucket) or []
 
     def timesheet_entry(self, bucket, recording, date, hours, description):
         """Post one timesheet entry (`hours` on day `date`, YYYY-MM-DD) on to-do or card `recording` in `bucket`."""
@@ -2491,16 +2478,13 @@ class Tools:
                        "-d", json.dumps(body), project=bucket) or {}
 
     def transcript_events(self, path, since):
-        """The events of each Claude Code transcript at `path` (one .jsonl file, or every one under a directory) changed
-        at or after `since`: {session file name: [(time, waits on a tool call), ...] sorted}. A missing path has none.
+        """The events of each Claude Code transcript under directory `path` changed at or after `since`: {session file
+        name: [(time, waits on a tool call), ...] sorted}. A missing directory has none.
 
         Each line with a "timestamp" is an event; an assistant line that calls a tool waits on it until the next event.
         A session is keyed by its file name, so one seen under two paths (a symlinked home) counts once.
         """
-        if os.path.isdir(path):
-            files = sorted(glob.glob(os.path.join(path, "**", "*.jsonl"), recursive=True))
-        else:
-            files = [path] if os.path.isfile(path) else []
+        files = sorted(glob.glob(os.path.join(glob.escape(path), "**", "*.jsonl"), recursive=True))
         out = {}
         for f in files:
             try:
@@ -2625,14 +2609,12 @@ def parse_chat_url(url, account):
     return m.group(2), m.group(3), int(m.group(4)) if m.group(4) else None
 
 
-def parse_recording(on, account, project):
-    """(bucket, recording id) of a to-do's or card's Basecamp URL in `account`, or of a bare id in `project`."""
+def parse_recording(on, account):
+    """(bucket, recording id) of a to-do's or card's Basecamp URL in `account`."""
     s = str(on).strip()
-    if s.isdigit():
-        return str(project), int(s)
     m = re.search(r"basecamp(?:api)?\.com/(\d+)/(?:buckets|projects)/(\d+)/(?:[\w/]+/)?(\d+)(?=$|[/?#.])", s)
     if not m:
-        raise ValueError(f"{on!r} is not a to-do or card id or URL "
+        raise ValueError(f"{on!r} is not a to-do or card URL "
                          "(https://3.basecamp.com/<account>/buckets/<project>/todos/<id>, or .../card_tables/cards/<id>)")
     if m.group(1) != str(account):
         raise ValueError(f"{on!r} is in account {m.group(1)}, not this home's account {account}")

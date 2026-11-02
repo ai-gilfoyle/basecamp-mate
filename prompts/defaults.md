@@ -289,8 +289,8 @@ finished day; you say what you work on, and where:
 - `timesheet-unmapped`: time on a key with no to-do or card. Name it with `timesheet start
   --key <key> --on <URL> --workdir <dir>`; if there is none, ask the captain which to use.
 - `timesheet-refused`: a project's timesheet refused an entry. Tell the captain that
-  project does not have timesheet tracking turned on (or your login cannot log time there),
-  and once they fix it, run `python3 SYNC/sync.py timesheet retry C --project <project id>`.
+  project does not have timesheet tracking turned on (or your login cannot log time there).
+  The sync tries the entry again every hour, so it posts once they fix it.
 
 ## Reading Basecamp yourself
 
