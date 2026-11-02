@@ -7,6 +7,7 @@ import io, json, os, sys, unittest
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_sync import ACTING, Base, Stub  # noqa: E402
@@ -25,6 +26,7 @@ class TimesheetStub(Stub):
         self.types = {}  # recording id -> its type ("Todo" when absent)
         self.refuse = None  # an error code the entry post fails with, e.g. "not_found"
         self.listed = []  # the timesheet entries `timesheet item` lists
+        self.retryable = False  # whether a refused entry post says it may be retried
 
     def __call__(self, cmd, **kw):
         args = cmd[3:-3]
@@ -42,7 +44,7 @@ class TimesheetStub(Stub):
             self.calls.append(args)
             if self.refuse:
                 return SimpleNamespace(stdout=json.dumps({"ok": False, "code": self.refuse, "error": "Resource not found",
-                                                          "retryable": False}), stderr="", returncode=1)
+                                                          "retryable": self.retryable}), stderr="", returncode=1)
             data = {"id": 7000 + len(self.calls), "app_url": "https://3.basecamp.com/1111111/entries/1"}
             return SimpleNamespace(stdout=json.dumps({"ok": True, "data": data}), stderr="", returncode=0)
         return super().__call__(cmd, **kw)
@@ -124,6 +126,17 @@ class ActiveTime(TimesheetBase):
         # 14:00-14:06 in 3-minute steps (6 min), 14:20 after an idle 14 minutes (not counted), a tool call at 14:20
         # answered at 14:50 (30 min), then 15:55 after an hour's idle (not counted): 36 min, 0.5 h.
         self.transcript("s1", ev("14:00"), ev("14:03"), ev("14:06"), ev("14:20", tool=True), ev("14:50"), ev("15:55"))
+        self.track()
+        self.assertEqual(self.hours(), {DAY: 0.5})
+
+    def test_a_tool_wait_lasts_until_its_result_across_the_lines_between(self):
+        # A tool call at 14:00, a progress line at 14:01, its result at 14:30: 30 minutes, 0.5 h.
+        call = {"type": "assistant", "timestamp": f"{DAY}T14:00:00Z",
+                "message": {"content": [{"type": "tool_use", "id": "t1", "name": "Bash"}]}}
+        progress = {"type": "progress", "timestamp": f"{DAY}T14:01:00Z"}
+        result = {"type": "user", "timestamp": f"{DAY}T14:30:00Z",
+                  "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]}}
+        self.transcript("s1", call, progress, result, ev("15:10"))
         self.track()
         self.assertEqual(self.hours(), {DAY: 0.5})
 
@@ -212,6 +225,33 @@ class Posting(TimesheetBase):
         self.sync().main([])
         self.assertEqual([b["date"] for _, b in self.stub.entries()], [DAY])
         self.assertNotIn("settled", self.state()["items"]["fix-import"])
+
+    def test_a_day_waits_until_its_last_tool_wait_is_known(self):
+        self.track()
+        for at, posts in (("2026-10-21T04:30:00", 0), ("2026-10-21T05:00:00", 1)):  # 00:30, then 01:00 in New York
+            fixed = datetime.fromisoformat(at).replace(tzinfo=timezone.utc)
+
+            class Now(datetime):
+                @classmethod
+                def now(cls, tz=None):
+                    return fixed
+
+            with mock.patch.object(behaviors, "datetime", Now):
+                self.post()
+            self.assertEqual(len(self.stub.entries()), posts)
+
+    def test_an_entry_post_is_tried_once_and_the_next_run_reads_first(self):
+        self.track()
+        self.stub.refuse, self.stub.retryable = "api_error", True
+        self.post()
+        self.assertEqual(len(self.stub.entries()), 1)
+        self.assertIn("retrying next run", self.log())
+        self.stub.refuse = None
+        self.stub.listed = [{"id": 8124, "date": DAY, "description": "Active agent time: fix-import",
+                             "creator": {"id": ACTING}}]  # the failed post had in fact made the entry
+        self.post()
+        self.assertEqual(len(self.stub.entries()), 1)
+        self.assertEqual(self.state()["posted"]["fix-import"][DAY]["entry"], 8124)
 
     def test_a_stopped_key_with_every_day_posted_is_not_read_again(self):
         self.track(to=f"{DAY}T23:00:00Z")

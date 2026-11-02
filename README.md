@@ -586,13 +586,14 @@ used. `sync.py timesheet stop C --key <key>` stops counting. Nothing is guessed 
 or task names.
 
 **Active time** is read from the transcript lines' timestamps, between each start and stop:
-a gap of at most 5 minutes between two lines of a transcript counts, and so does a wait of
-at most 60 minutes on a tool call the agent made (a long command, a subagent); a longer gap
-is idle. The spans of all a key's transcripts are merged, so time is never counted twice,
+a gap of at most 5 minutes between two lines of a transcript counts, and so does a gap of
+at most 60 minutes while a tool call the agent made runs (a long command, a subagent: from
+the call to its result, across the lines between them); a longer gap is idle. The spans of all a key's transcripts are merged, so time is never counted twice,
 then split by US Eastern day (`America/New_York`, whatever the config `timezone`) and
 rounded to the nearest quarter hour.
 
-**Posting.** Hourly, each finished day (before today, US Eastern) with a quarter hour or
+**Posting.** Hourly, each finished day (an hour past its US Eastern midnight, once its last
+tool wait is known) with a quarter hour or
 more is posted as one entry (`date`, `hours`, `description` "Active agent time: <key>") as
 the agent's login, never as the owner. `timesheet.json` keeps every entry posted, and
 before each post the sync reads the agent's entries on that to-do or card for that day: when
@@ -1404,12 +1405,14 @@ answering in that chat, `unwatch` stopping reads, a watch past its `--until` day
 nothing and ending, refusals (a past day, another account, a configured chat, a URL that is
 no chat), a dry run, a blocked sender answered only when they address the agent, and the
 behavior's cadence; `tests/test_timesheet.py` covers timesheets: active time (short gaps
-and tool waits counted, idle gaps and an over-long tool wait not, the config's limits,
+and tool waits counted, a tool wait lasting to its result across the lines between, idle
+gaps and an over-long tool wait not,
 several transcripts merged and a symlinked copy counted once, only between start and
 stop, a day cut at US Eastern midnight whatever the config zone, rounding to quarters), off
 by default (no call, no file, no log line, the commands refused), the dry run posting
 nothing, one entry per day and the ledger stopping a second, an entry already in Basecamp
-only added to the ledger, today waiting, a settled key not read again, unmapped work
+only added to the ledger, a day waiting an hour past its end, an entry post tried once, a
+settled key not read again, unmapped work
 skipped and reported once and posted once it has a to-do, a mirrored card as the target, a
 refused project reported once and its other entries still tried, failures retried each run,
 no post as the owner, `timesheet start` and `stop`, and `init --timesheet`. The `basecamp`, `gh` and `lavish-axi` CLIs are stubbed, and `init`'s systemd and check

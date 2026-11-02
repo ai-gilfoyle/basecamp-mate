@@ -237,11 +237,12 @@ class Tools:
         with open(self.path("pending-comments.jsonl"), "a") as f:
             f.write(json.dumps(rec) + "\n")
 
-    def bc(self, *args, input=None, project=None):
-        """Run the basecamp CLI on the configured project, or on `project` (another bucket of the account) when given."""
+    def bc(self, *args, input=None, project=None, tries=3):
+        """Run the basecamp CLI on the configured project, or on `project` (another bucket of the account) when given;
+        a retryable failure is tried again, up to `tries` runs in all."""
         prof = ["-P", self.profile] if self.profile else []
         cmd = ["basecamp", "-a", self.account, *prof, *args, "-p", str(project or self.project), "--json"]
-        for attempt in range(3):
+        for attempt in range(tries):
             kw = {"input": input} if input is not None else {}
             r = self.run(cmd, capture_output=True, text=True, timeout=120, **kw)
             try:
@@ -250,7 +251,7 @@ class Tools:
                 out = {"ok": False, "error": (r.stdout + r.stderr)[:300]}
             if out.get("ok"):
                 return out.get("data")
-            if not out.get("retryable") or attempt == 2:
+            if not out.get("retryable") or attempt == tries - 1:
                 self.errors += 1
                 raise BasecampError(f"basecamp {' '.join(args[:3])}: {out.get('error')}", out.get("code"), out.get("error"))
             time.sleep(3)
@@ -2472,16 +2473,18 @@ class Tools:
                        project=bucket) or []
 
     def timesheet_entry(self, bucket, recording, date, hours, description):
-        """Post one timesheet entry (`hours` on day `date`, YYYY-MM-DD) on to-do or card `recording` in `bucket`."""
+        """Post one timesheet entry (`hours` on day `date`, YYYY-MM-DD) on to-do or card `recording` in `bucket`, tried
+        once: a failure may have posted it, so the next run reads the entries before posting again."""
         body = {"date": date, "hours": f"{hours:g}", "description": description}
         return self.bc("api", "post", f"/projects/{bucket}/recordings/{recording}/timesheet/entries.json",
-                       "-d", json.dumps(body), project=bucket) or {}
+                       "-d", json.dumps(body), project=bucket, tries=1) or {}
 
     def transcript_events(self, path, since):
         """The events of each Claude Code transcript under directory `path` changed at or after `since`: {session file
-        name: [(time, waits on a tool call), ...] sorted}. A missing directory has none.
+        name: [(time, a tool call is running), ...] sorted}. A missing directory has none.
 
-        Each line with a "timestamp" is an event; an assistant line that calls a tool waits on it until the next event.
+        Each line with a "timestamp" is an event. A tool call (an assistant line's tool_use) runs until the line with its
+        tool_result, across the events between them; a new prompt (a user line that is no tool result) ends any left.
         A session is keyed by its file name, so one seen under two paths (a symlinked home) counts once.
         """
         files = sorted(glob.glob(os.path.join(glob.escape(path), "**", "*.jsonl"), recursive=True))
@@ -2490,7 +2493,7 @@ class Tools:
             try:
                 if datetime.fromtimestamp(os.path.getmtime(f), timezone.utc) < since:
                     continue
-                events = []
+                events, running = [], set()
                 with open(f, errors="replace") as fh:
                     for ln in fh:
                         try:
@@ -2501,9 +2504,13 @@ class Tools:
                         if at.tzinfo is None:
                             at = at.replace(tzinfo=timezone.utc)
                         content = (o.get("message") or {}).get("content") if isinstance(o.get("message"), dict) else None
-                        tool = o.get("type") == "assistant" and isinstance(content, list) and any(
-                            isinstance(c, dict) and c.get("type") == "tool_use" for c in content)
-                        events.append((at, tool))
+                        blocks = [c for c in content if isinstance(c, dict)] if isinstance(content, list) else []
+                        if o.get("type") == "assistant":
+                            running |= {c.get("id") for c in blocks if c.get("type") == "tool_use"}
+                        elif o.get("type") == "user":
+                            results = {c.get("tool_use_id") for c in blocks if c.get("type") == "tool_result"}
+                            running = running - results if results else set()
+                        events.append((at, bool(running)))
             except OSError:
                 continue
             out.setdefault(os.path.basename(f), []).extend(events)

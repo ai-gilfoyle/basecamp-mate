@@ -843,8 +843,9 @@ class Timesheet(Behavior):
     source, only between its start and stop: a gap of at most GAP between two events of a
     transcript is active, and so is a wait of at most TOOL on a tool call the agent made; the
     spans of all a key's transcripts are merged (time is never counted twice), split by US
-    Eastern day and rounded to the nearest quarter hour. Hourly, each finished day (before
-    today, in US Eastern time) with a quarter hour or more is posted as one entry on the key's
+    Eastern day and rounded to the nearest quarter hour. Hourly, each finished day (TOOL past
+    its US Eastern midnight, so its last tool wait is known) with a quarter hour or more is
+    posted as one entry on the key's
     to-do or card: the "posted" ledger keeps each key's posted days, and before each post the
     to-do's or card's entries are read, so a day this login already has an entry for there
     (DESCRIPTION, that date) is only added to the ledger. A key with no to-do or card is
@@ -907,7 +908,7 @@ class Timesheet(Behavior):
         if not tracked:
             return
         now = datetime.now(timezone.utc)
-        today = now.astimezone(EASTERN).date().isoformat()
+        final = (now - TOOL).astimezone(EASTERN).date().isoformat()  # days before it can gain no more time
         posted, refused = state.setdefault("posted", {}), state.setdefault("refused", {})
         unmapped = state.setdefault("unmapped", {})
         dry, planned, me = "dry " if t.dry else "", 0, None
@@ -920,12 +921,12 @@ class Timesheet(Behavior):
             if item.get("settled"):
                 continue
             days = self.hours(item, now)
-            due = {d: h for d, h in days.items() if d < today and d not in (posted.get(key) or {})}
+            due = {d: h for d, h in days.items() if d < final and d not in (posted.get(key) or {})}
             sources = item.get("sources") or []
-            stopped = bool(sources) and all(s.get("to") and local_day(s["to"], EASTERN) < today for s in sources)
+            stopped = bool(sources) and all(s.get("to") and local_day(s["to"], EASTERN) < final for s in sources)
             if not due:
                 if stopped:
-                    item["settled"] = True  # stopped before today, every day with time posted: never read again
+                    item["settled"] = True  # stopped before a final day, every day with time posted: never read again
                     save()
                 continue
             target = self.target(key, item)
@@ -990,8 +991,8 @@ DESCRIPTION = "Active agent time: "  # what each entry's description starts with
 
 
 def active_spans(events, gap, tool):
-    """The active spans of one transcript's sorted (time, waits on a tool call) events: each gap to the next event of at
-    most `gap`, or of at most `tool` while waiting on a tool call."""
+    """The active spans of one transcript's sorted (time, a tool call is running) events: each gap to the next event of
+    at most `gap`, or of at most `tool` while a tool call is running."""
     return [(a, b) for (a, waits), (b, _) in zip(events, events[1:]) if timedelta(0) < b - a <= (tool if waits else gap)]
 
 
