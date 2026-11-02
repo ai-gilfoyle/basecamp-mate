@@ -1608,9 +1608,8 @@ class Tools:
         if bucket in {str(p.get("bucket")) for p in self.load("pings.json", {}).get("pings", {}).values()}:
             raise ValueError(f"chat {chat} is a Ping: the Ping reader relays it (\"pings\"), so it is not watched")
         if until is not None:
-            try:
-                ends = datetime.strptime(until, "%Y-%m-%d").date()
-            except ValueError:
+            ends = watch_until(until)
+            if ends is None:
                 raise ValueError(f"--until {until!r} is not a date (YYYY-MM-DD)")
             if ends < self.local_today():
                 raise ValueError(f"--until {until} has already passed")
@@ -1657,16 +1656,20 @@ class Tools:
 
     def watches(self, held=False):
         """The chats watched now, as {chat id: its chats.json record}; a watch whose "until" day has passed is left out,
-        and so, unless `held`, is one in a project another home on this login reads this run (`watch_held`)."""
+        and so, unless `held`, is one in a project another home on this login reads this run (`watch_held`). A watch
+        whose stored "until" is not a date is left out too, never raising, so it cannot stop a run; end_watches ends it."""
         today = None
         out = {}
         for chat, rec in self.load("chats.json", {}).items():
             w = rec.get("watch")
             if not isinstance(w, dict):
                 continue
-            if w.get("until"):
+            if w.get("until") is not None:
+                ends = watch_until(w["until"])
+                if ends is None:
+                    continue
                 today = today or self.local_today()
-                if datetime.strptime(w["until"], "%Y-%m-%d").date() < today:
+                if ends < today:
                     continue
             if not held and str(rec.get("bucket") or self.project) in self.watch_held:
                 continue
@@ -1674,14 +1677,18 @@ class Tools:
         return out
 
     def end_watches(self):
-        """Drop each watch whose "until" day has passed from chats.json, logged; the chat's cursor and lines stay."""
+        """Drop each watch whose "until" day has passed, or whose stored "until" is not a date, from chats.json, logged;
+        the chat's cursor and lines stay. A dry run only logs."""
         state, live = self.load("chats.json", {}), self.watches(held=True)
         ended = [c for c, r in state.items() if isinstance(r.get("watch"), dict) and c not in live]
+        for chat in ended:
+            until = state[chat]["watch"].get("until")
+            self.log(("dry " if self.dry else "") + f"watch: chat {chat} no longer watched: " +
+                     (f"{until} has passed" if watch_until(until) is not None else
+                      f"its until {until!r} is not a date (YYYY-MM-DD); watch it again with a valid --until"))
+            state[chat].pop("watch")
         if not ended or self.dry:
             return ended
-        for chat in ended:
-            self.log(f"watch: chat {chat} no longer watched: {state[chat]['watch']['until']} has passed")
-            state[chat].pop("watch")
         self.save_json("chats.json", state)
         return ended
 
@@ -2493,6 +2500,16 @@ def parse_chat_url(url, account):
     if m.group(1) != str(account):
         raise ValueError(f"{url!r} is in account {m.group(1)}, not this home's account {account}")
     return m.group(2), m.group(3), int(m.group(4)) if m.group(4) else None
+
+
+def watch_until(until):
+    """A watch's "until" (YYYY-MM-DD) as a date; None when it is not one."""
+    if not isinstance(until, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", until):
+        return None
+    try:
+        return datetime.strptime(until, "%Y-%m-%d").date()
+    except ValueError:
+        return None
 
 
 def configured_chats(cfg):

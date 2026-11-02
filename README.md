@@ -677,12 +677,15 @@ one that signs in as the owner, nothing is read: the assignments would be the ow
   the Ping reader relays it and its lines would be recorded twice, a URL in another
   account and an `--until` day already past. Pass the URL of the line being replied to
   (`.../chats/<chat>@<line>`, a record's `url`), so an answer posted before `watch` runs is
-  not missed. Basecamp may report a Campfire reply to the
-  agent's line as a `Mention` or as a `Chat` notification; no recorded example of either
+  not missed. `--until` must be a real `YYYY-MM-DD` day; a stored `until` that is not one
+  (a hand edit) never stops a run: the next run ends that watch and logs why. Basecamp may
+  report a Campfire reply to the agent's line as a `Mention` or as a `Chat` notification; no recorded example of either
   shape exists here, so both run the chat reader. A watch never makes a timer run refuse:
   when another home's live run reads the watched chat's project with the same login, each
   run skips that chat and logs `watch: skipping watched chat` once (and `reading the watched
-  chats ... again` once that stops), so that home relays it; the watch stays (see "One home
+  chats ... again` once that stops); the watch stays. That home relays only an @mention of
+  the agent there (or lines of a chat in its own `chats`), so a plain answer reaches no
+  agent meanwhile; `watch` warns up front when such a home is live (see "One home
   per project and login"). A home that never runs `watch` reads exactly as before.
 - Asking the owner: with `ask_chat` set,
   `sync.py ask --home <home> --config <config.json> --body-file <file>` posts the file's
@@ -1336,7 +1339,9 @@ another project and in this one), watching again taking the boosts there now as 
 baseline (counts and boost ids), a watched chat in a project another home on this login
 reads skipped (logged once, the watch kept, never a refused run, read again once that home
 stops) and a notification for it left alone, another login or a stale claim not skipping
-it, a watch started during the claim waiting for the run, a Ping refused, a reply
+it, `watch` warning up front when such a home is live (not for another login or a stale
+claim), a malformed `--until` refused and a bad stored one ending the watch without stopping
+the run, a watch started during the claim waiting for the run, a Ping refused, a reply
 that comes as a `Mention` recorded once, the owner's boost on the agent's line there, `reply`
 answering in that chat, `unwatch` stopping reads, a watch past its `--until` day reading
 nothing and ending, refusals (a past day, another account, a configured chat, a URL that is

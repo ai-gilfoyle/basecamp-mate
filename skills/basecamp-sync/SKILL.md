@@ -327,8 +327,10 @@ that read.
   `?` reaches you. Their lines arrive as `chat-question` records carrying
   `project`; answer with `reply`. Once answered, stop with `sync.py unwatch --chat <URL>`
   (`--until` also ends it). A chat in the config's `chats` needs no watch, and a Ping is
-  refused (the Ping reader relays it). If `sync.log` says `watch: skipping watched chat`,
-  another home on this login reads that project and relays the chat instead.
+  refused (the Ping reader relays it). If `watch` warns, or `sync.log` says `watch:
+  skipping watched chat`, another home on this login reads that project: while it runs,
+  an @mention of you in that chat reaches that home, but a plain answer reaches no agent,
+  so ask there with an @mention instead.
 - To put a question or decision to the owner in chat (only when `ask_chat` is set), post
   one per line with
   `python3 $SYNC/sync.py ask --home <home> --config <home>/data/basecamp-sync/config.json --body-file <file>`;

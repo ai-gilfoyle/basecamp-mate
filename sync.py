@@ -78,7 +78,7 @@ from datetime import datetime, timezone
 import behaviors, runs
 from behaviors import COLUMNS, render_decision, render_release, inline_md  # noqa: F401
 from tools import (Tools, THUMBS, EYES, is_due, render_reply, is_emoji, is_thumbs_up,  # noqa: F401
-                   parse_lavish, parse_show, task_item, none)
+                   parse_lavish, parse_show, task_item, none, parse_chat_url)
 
 
 class Sync(Tools):
@@ -147,6 +147,24 @@ class Sync(Tools):
                 self.save_json("timer.json", timer)
         return plan
 
+    def watch(self, url, after_line=None, until=None):
+        """Tools.watch, then a warning when another home's live run on this login already reads the chat's project:
+        while it does, the timer skips the chat, so only an @mention there reaches an agent (that home's)."""
+        done = super().watch(url, after_line, until)
+        bucket, chat, _ = parse_chat_url(url, self.account)
+        if bucket == str(self.project):
+            return done
+        me = self.acting_id()
+        homes = sorted(c.get("home") or "?" for c in runs.Registry().holders(
+            self.config_path, self.cfg, me if isinstance(me, int) else None, bucket))
+        if homes:
+            say = f"watch: warning: another home's live run reads project {bucket} with this login ({', '.join(homes)}), " \
+                  f"so chat {chat} is skipped while it runs: an @mention of the agent there reaches that home, " \
+                  "but a plain answer reaches no agent"
+            self.log(say)
+            print(say)
+        return done
+
     def claim(self, allow=False):
         """Claim what this config watches for this run (runs.py): False when another home's live run overlaps.
 
@@ -164,6 +182,7 @@ class Sync(Tools):
         me = self.acting_id()
         reg = runs.Registry()
         self.watch_held = set()
+        self.end_watches()  # a watch past its day, or with an "until" that is not a date, ends here, logged once
         buckets = {str(r.get("bucket") or self.project) for r in self.watches().values()}
         others = reg.claim(self.config_path, self.home, self.cfg, me if isinstance(me, int) else None, allow=allow, dry=self.dry,
                            buckets=buckets)
@@ -178,7 +197,8 @@ class Sync(Tools):
                     if (timer.get("watch_held") or {}).get(b) != hs:
                         chats = sorted(c for c, r in self.watches(held=True).items() if str(r.get("bucket") or self.project) == b)
                         say(f"watch: skipping watched chat {', '.join(chats)} in project {b}: another home's live run "
-                            f"reads that project with this login ({', '.join(hs)}), so that home relays it")
+                            f"reads that project with this login ({', '.join(hs)}); an @mention of the agent there "
+                            "reaches that home, but a plain answer reaches no agent until it stops")
                 for b in sorted(set(timer.get("watch_held") or {}) - set(held)):
                     say(f"watch: reading the watched chats in project {b} again: no other home's live run reads it now")
                 if held:

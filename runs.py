@@ -143,6 +143,14 @@ class Registry:
             fcntl.flock(f, fcntl.LOCK_EX)
             yield
 
+    def holders(self, config, cfg, person, bucket):
+        """The live claims of other configs on `cfg`'s login that claim project `bucket` as their own."""
+        config = os.path.realpath(config)
+        mine = {"profile": cfg.get("profile") or "", "person": person if isinstance(person, int) else None}
+        token, now = f"project {cfg['account']}/{bucket}", self.now()
+        return [c for c in self.claims() if c.get("config") != config and same_login(mine, c) and live(c, now)
+                and token in (c.get("watches") or [])]
+
     def claim(self, config, home, cfg, person, allow=False, dry=False, buckets=()):
         """Claim `cfg`'s watches for this run: the live overlapping claims of other configs, each with what it shares.
 

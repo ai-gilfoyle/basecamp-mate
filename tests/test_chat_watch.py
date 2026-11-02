@@ -202,6 +202,28 @@ class Ending(Base):
         self.assertNotIn("watch", self.chats()["78"])
         self.assertIn("watch: chat 78 no longer watched: 2000-01-01 has passed", self.log())
 
+    def test_a_malformed_until_is_refused(self):
+        for bad in ("2099-13-01", "2099-1-5", "next week", "2099-02-30"):
+            self.assertEqual(self.watch("--until", bad), 1)
+            self.assertIn(f"--until {bad!r} is not a date (YYYY-MM-DD)", self.log())
+        self.assertNotIn("78", self.chats())
+
+    def test_a_bad_stored_until_never_stops_a_run_and_ends_that_watch_once(self):
+        self.watch()
+        state = self.chats()
+        state["78"]["watch"]["until"] = "soon"
+        json.dump(state, open(os.path.join(self.cfgdir, "chats.json"), "w"))
+        self.assertEqual(self.sync().watches(), {})
+        self.stub.lines["78"].append(there(2))
+        for _ in range(2):
+            with redirect_stdout(io.StringIO()):
+                code = sync.cli(["--home", self.home, "--config", os.path.join(self.cfgdir, "config.json")], runner=self.stub)
+            self.assertEqual(code, 0)
+        self.assertEqual(self.log().count("watch: chat 78 no longer watched: its until 'soon' is not a date"), 1)
+        self.assertNotIn("FAILED", self.log())
+        self.assertNotIn("watch", self.chats()["78"])
+        self.assertEqual(self.pending(), [])
+
     def test_refused_past_until_another_account_a_configured_chat_and_a_non_chat_url(self):
         for args, chat, why in ((["--until", "2000-01-01"], CHAT, "has already passed"),
                                 ([], f"https://3.basecamp.com/999/buckets/{OTHER}/chats/78", "not this home's account"),
@@ -276,7 +298,8 @@ class Claim(Base):
         self.assertEqual(self.timer(), 0)
         self.assertEqual((self.pending(), self.reads_there()), ([], []))
         self.assertEqual(self.log().count("watch: skipping watched chat 78 in project 88888888: another home's live run "
-                                          "reads that project with this login (/other-home), so that home relays it"), 1)
+                                          "reads that project with this login (/other-home); an @mention of the agent there "
+                                          "reaches that home, but a plain answer reaches no agent until it stops"), 1)
         self.assertNotIn("FAILED", self.log())
         self.assertIn("watch", self.chats()["78"])  # skipped, not ended
         [mine] = [c for c in runs.Registry().claims() if c["home"] == self.home]
@@ -314,6 +337,26 @@ class Claim(Base):
         self.watch("--after-line", "20")
         self.assertFalse(self.sync().read_mention(str(OTHER), 78, 10))
         self.assertEqual((self.pending(), self.chats()["78"].get("lines")), ([], None))
+
+    def test_watch_warns_up_front_when_another_home_on_this_login_reads_that_project(self):
+        self.other_home()
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = sync.cli(["watch", "--home", self.home, "--config", os.path.join(self.cfgdir, "config.json"),
+                             "--chat", CHAT], runner=self.stub)
+        self.assertEqual(code, 0)
+        said = (f"watch: warning: another home's live run reads project {OTHER} with this login (/other-home), so chat 78 "
+                "is skipped while it runs: an @mention of the agent there reaches that home, but a plain answer reaches no agent")
+        self.assertIn(said, out.getvalue())
+        self.assertIn(said, self.log())
+        self.assertIn("watch", self.chats()["78"])  # still watched: read again once that home stops
+
+    def test_no_warning_for_another_login_or_a_stale_claim(self):
+        for kw in ({"profile": "someone-else"}, {"last_run": time.time() - 2 * runs.STALE}):
+            claim = self.other_home(**kw)
+            self.watch()
+            os.remove(claim)
+        self.assertNotIn("watch: warning", self.log())
 
     def test_another_login_or_a_stale_claim_does_not_skip_it(self):
         self.watch()
