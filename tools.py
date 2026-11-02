@@ -2481,7 +2481,8 @@ class Tools:
 
     def transcript_events(self, path, since):
         """The events of each Claude Code transcript under directory `path` changed at or after `since`: {session file
-        name: ([event time, ...] sorted, [(tool call time, its result's time), ...])}. A missing directory has none.
+        name: ([event time, ...] sorted, [(tool call time, its result's time), ...])}. A missing directory has none, and a
+        file removed while it is read is skipped and logged; any other read failure (OSError) is raised.
 
         Each line with a "timestamp" is an event. A tool wait runs from an assistant line's tool_use to the line with its
         tool_result, across the events between them; a call with no result yet has no wait.
@@ -2511,7 +2512,8 @@ class Tools:
                             elif c.get("type") == "tool_result" and c.get("tool_use_id"):
                                 results.setdefault(c["tool_use_id"], at)
                         events.append(at)
-            except OSError:
+            except FileNotFoundError:  # removed since the listing: gone for good
+                self.log(f"timesheet: transcript {f} is gone, skipped")
                 continue
             times, waits = out.setdefault(os.path.basename(f), ([], []))
             times.extend(events)

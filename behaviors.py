@@ -854,7 +854,8 @@ class Timesheet(Behavior):
     skipped and reported once (a `timesheet-unmapped` record); its days post once it has one.
     A project whose timesheet refuses an entry (forbidden, not found, invalid) is reported once
     (a `timesheet-refused` record) until an entry there posts again; a failed entry is tried
-    again on the next run. Nothing is posted without a profile that is not the owner's. A dry
+    again on the next run. A key with a transcript that cannot be read is neither posted nor settled that
+    run, only logged, so no day saves a partial total. Nothing is posted without a profile that is not the owner's. A dry
     run, and `sync.py timesheet post --dry-run`, only prints what it would post.
     """
     name, keys, every = "timesheet", ("timesheet",), SWEEP
@@ -922,7 +923,11 @@ class Timesheet(Behavior):
         for key, item in sorted(tracked.items()):
             if item.get("settled"):
                 continue
-            days = self.hours(item, now)
+            try:
+                days = self.hours(item, now)
+            except OSError as e:  # a transcript unreadable now: post and settle nothing, so no day saves a partial total
+                t.log(f"FAILED timesheet: {key} not posted, a transcript could not be read, retrying next run: {e}")
+                continue
             due = {d: h for d, h in days.items() if d < final and d not in (posted.get(key) or {})}
             sources = item.get("sources") or []
             stopped = bool(sources) and all(s.get("to") and local_day(s["to"], EASTERN) < final for s in sources)

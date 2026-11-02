@@ -606,7 +606,10 @@ work can share one to-do. A key with no to-do or card is skipped and reported on
 (`timesheet-unmapped`); its days post once it has one. A project whose timesheet refuses an
 entry (forbidden, not found or invalid) is reported once (`timesheet-refused`) until an
 entry there posts again. Every failed entry is a FAILED line and is tried again on the next
-run; other entries in the same project are still posted. `sync.py timesheet post C
+run; other entries in the same project are still posted. When one of a key's transcripts
+cannot be read, that key posts nothing that run (a FAILED line) and is not settled, so no
+day is saved with part of its time; a transcript removed while it is read is skipped and
+logged. `sync.py timesheet post C
 --dry-run` prints what would be posted and posts nothing. Only days after `start` count:
 there is no backfill.
 

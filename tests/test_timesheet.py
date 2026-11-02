@@ -269,6 +269,36 @@ class Posting(TimesheetBase):
         self.assertEqual(len(self.stub.entries()), 1)
         self.assertEqual(self.state()["posted"]["fix-import"][DAY]["entry"], 8124)
 
+    def test_an_unreadable_transcript_defers_the_key_and_the_full_hours_post_once_it_reads(self):
+        os.makedirs(os.path.join(self.work, "s2.jsonl"))  # read fails (IsADirectoryError), also when run as root
+        self.track(to=f"{DAY}T23:00:00Z")
+        self.post()
+        self.assertEqual(self.stub.entries(), [])
+        self.assertNotIn("fix-import", self.state().get("posted") or {})
+        self.assertNotIn("settled", self.state()["items"]["fix-import"])
+        self.assertIn("FAILED timesheet: fix-import not posted, a transcript could not be read", self.log())
+        os.rmdir(os.path.join(self.work, "s2.jsonl"))
+        self.transcript("s2", *[ev(f"15:{m:02d}") for m in range(0, 31, 3)])  # 15:00-15:30: with s1, 1.5 h
+        self.post()
+        self.post()
+        self.assertEqual([b["hours"] for _, b in self.stub.entries()], ["1.5"])
+        self.assertTrue(self.state()["items"]["fix-import"]["settled"])
+
+    def test_a_transcript_removed_while_read_is_skipped_and_logged(self):
+        gone = self.transcript("s2", *[ev(f"15:{m:02d}") for m in range(0, 31, 3)])
+        real = os.path.getmtime
+
+        def getmtime(f):
+            if f == gone:
+                os.remove(gone)
+            return real(f)
+
+        self.track()
+        with mock.patch.object(tools.os.path, "getmtime", getmtime):
+            self.post()
+        self.assertEqual([b["hours"] for _, b in self.stub.entries()], ["1"])
+        self.assertIn(f"timesheet: transcript {gone} is gone, skipped", self.log())
+
     def test_a_stopped_key_with_every_day_posted_is_not_read_again(self):
         self.track(to=f"{DAY}T23:00:00Z")
         self.post()
