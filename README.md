@@ -123,7 +123,7 @@ Without `notifications` (no `profile`, or `"notifications": false`) those five r
 | `notifications` | `profile` (off with `"notifications": false`), `mentions` | default (`--mentions-anywhere`: @mentions and followed threads account-wide) | every run: the notification and boost readers, then the reader for each thread that changed; mark read | records arrive within about 30 seconds; an `unmonitored` record becomes a decision to-do |
 | `card-mirror` | `tables`, `repos` (off with `"cards": false`), `assign_captain` | default (`--no-cards` to leave off; `--no-assign-captain` never assigns the owner) | mirror the backlog; card comment and 👍 readers (5 min) | relay comments and approvals; `reply`; with `"assign_captain": false`, send each decision to the main home instead |
 | `chat-inbox` | `chats` | default; `--every-line` | chat reader (hourly sweep) | `reply` to each line |
-| `chat-watch` | none: the watches in `chats.json` (`sync.py watch`) | none | chat reader for each watched chat, in its own project; ends a watch whose `--until` day has passed (hourly sweep) | `watch` after asking a question in a chat outside the project; `reply` to each line; `unwatch` once answered |
+| `chat-watch` | none: the watches in `chats.json` (`sync.py watch`) | none | chat reader for each watched chat, in its own project (hourly sweep); each run first ends a watch whose `--until` day has passed or is not a date | `watch` after asking a question in a chat outside the project; `reply` to each line; `unwatch` once answered |
 | `chat-asks` | `ask_chat` | by hand | none | `ask` |
 | `release-announcements` | `releases` | default, when the dock has one message board | post one message per new GitHub release | none |
 | `security-advisories` | `advisories` | `--advisories <owner/name>` (repeatable) | record each new GitHub security advisory and each new or reopened open Dependabot alert once (hourly) | route an advisory to the repo's owner, with severity, fix and disclosure decisions going to the captain; file a to-do for a Dependabot alert and route its fix the same day |
@@ -670,7 +670,7 @@ one that signs in as the owner, nothing is read: the assignments would be the ow
   (`project_people` for that project), and a blocked sender's line gets the automatic reply
   only when it @mentions the agent or a notification marks it addressed. The watch ends
   with `sync.py unwatch --chat <chat URL>`, or once its `--until` day (in the people's zone)
-  has passed: the sweep then drops it and logs that. The lines recorded stay, so `reply`
+  has passed: the next run then drops it and logs that. The lines recorded stay, so `reply`
   still answers them. Watching a chat again replaces its options, cursor and boost baseline; a chat in
   `chats` is refused, since the chat inbox reads it already, as is a Ping (a `circles`
   URL, a chat in a Ping bucket in `pings.json`, or one whose lines are in a `Circle`), since
