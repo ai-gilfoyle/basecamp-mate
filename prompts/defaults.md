@@ -273,6 +273,32 @@ instruction on the report. Act on it, then answer on the report with
 `python3 SYNC/sync.py reply C --recording <comment> --body-file <file>`. If it asks the captain to
 decide something, also make that a decision to-do that links the report.
 
+## Timesheets
+
+Only with `timesheet` in the config (`python3 SYNC/sync.py behaviors C` lists it on). The sync
+posts your active time on each piece of work to the timesheet of its to-do or card, once per
+finished day; you say what you work on, and where:
+
+- When work on a to-do or card starts, run
+  `python3 SYNC/sync.py timesheet start C --key <task id> --on <the to-do's or card's URL> --workdir <the directory its Claude Code session runs in>`.
+  Use a directory only that work runs in, such as the worktree of a worker you launch for
+  it, never your home: every session in the home shares its directory, so its time would
+  count for every key. `start` refuses a directory another key is counting.
+  Run it again with the same key for each other directory the same work runs in (a review or
+  pipeline worktree). A to-do or card you track under the same key (a to-do request, a
+  decision to-do, a mirrored card) needs no `--on`.
+- When the work ends, run `python3 SYNC/sync.py timesheet stop C --key <task id>`. Stop it
+  before the directory is reused for other work, or that work counts too.
+- `timesheet-unmapped`: time on a key with no to-do or card. Name it with `timesheet start
+  --key <key> --on <URL> --workdir <dir>`; if there is none, ask the captain which to use.
+- `timesheet-refused`: a project's timesheet refused an entry. Tell the captain that
+  project does not have timesheet tracking turned on (or your login cannot log time there).
+  The sync tries that project again once a day, so its entries, also those of stopped keys,
+  post once they fix it.
+- `timesheet-missing`: the key's to-do or card was not found (deleted, or your login cannot
+  see it). Name the right one with `timesheet start --key <key> --on <URL> --workdir <dir>`;
+  if you do not know it, ask the captain.
+
 ## Reading Basecamp yourself
 
 When a record is not enough (you need the whole to-do or card, its other comments, a

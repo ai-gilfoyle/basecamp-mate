@@ -331,6 +331,20 @@ that read.
   skipping watched chat`, another home on this login reads that project: while it runs,
   an @mention of you in that chat reaches that home, but a plain answer reaches no agent,
   so ask there with an @mention instead.
+- With `timesheet` in the config, your active time on each to-do or card is posted to its
+  timesheet once per finished day, read from the Claude Code transcripts you name. When
+  work on a to-do or card starts, run
+  `python3 $SYNC/sync.py timesheet start --home <home> --config <config> --key <task id> --on <to-do or card URL> --workdir <dir>`
+  with a directory only that work runs in (a worker's worktree, never the home; `start`
+  refuses one another key is counting), again with the same key for each other directory
+  the work runs in (a to-do or card
+  tracked under the key needs no `--on`), and `timesheet stop --key <task id>` when it
+  ends. `timesheet post --dry-run` prints what would be posted. A `timesheet-unmapped`
+  record is time with no to-do or card: name one with `timesheet start --on`. A
+  `timesheet-refused` record is a project whose timesheet refused an entry: tell the
+  captain timesheet tracking is off there; the sync tries it again once a day. A
+  `timesheet-missing` record is a key whose to-do or card was not found: name another
+  with `timesheet start --on`.
 - To put a question or decision to the owner in chat (only when `ask_chat` is set), post
   one per line with
   `python3 $SYNC/sync.py ask --home <home> --config <home>/data/basecamp-sync/config.json --body-file <file>`;

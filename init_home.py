@@ -41,7 +41,9 @@ project of the account, not just this one (the same one home per login). --assig
 does the same for a card the owner assigns to the --login in the project (never a card the
 sync mirrors from the backlog). --advisories
 <owner/name> (repeatable) records each new GitHub security advisory of that repository once. --backup
-<Docs & Files folder URL> keeps a daily snapshot of the config and state files in that folder. --listen-to <person> (repeatable: a person id, email or exact name) adds
+<Docs & Files folder URL> keeps a daily snapshot of the config and state files in that folder. --timesheet
+posts the agent's active time on each to-do or card it names with sync.py timesheet start to that
+to-do's or card's Basecamp timesheet, once per day (a re-run without it keeps an existing setting). --listen-to <person> (repeatable: a person id, email or exact name) adds
 people the sync listens to besides the captain, as "people"; their input is relayed
 with who wrote it, but only the captain decides or approves. --operator <person> (the same
 forms) names someone whose word authorizes the agent as the captain's does, as
@@ -250,8 +252,8 @@ class Init:
     def __init__(self, url, login, home, captain=None, listen_to=(), operators=(), participants_project=False,
                  participants_domains=(), participants_company=None, repo_map=(), create_missing=False, dry=False,
                  force=False, cards=True, assign_captain=True, todos=False, reports=False, every_line=False, checkins=None, releases=True, inbox=False,
-                 session_alert=None, pings=False, assigned_todos=False, assigned_anywhere=False, assigned_cards=False, mentions_anywhere=False, advisories=(), backup=None, chats=True, no_keyring=None,
-                 blocked=None, replace_people=False, runner=subprocess.run, system=None, sync_dir=HERE, out=print):
+                 session_alert=None, pings=False, assigned_todos=False, assigned_anywhere=False, assigned_cards=False, mentions_anywhere=False, advisories=(), backup=None, timesheet=False, chats=True,
+                 no_keyring=None, blocked=None, replace_people=False, runner=subprocess.run, system=None, sync_dir=HERE, out=print):
         self.account, self.project = parse_url(url)
         self.login, self.home = login, os.path.abspath(home)
         self.captain_arg, self.listen_to, self.operator_args = captain, list(listen_to), list(operators)
@@ -285,6 +287,7 @@ class Init:
         if bad:
             raise Refuse(f"--advisories takes a GitHub repository as owner/name, got {', '.join(bad)}")
         self.backup = parse_folder(backup) if isinstance(backup, str) else backup  # a folder URL, or the "backup" config
+        self.timesheet = timesheet  # True writes "timesheet": {}; False keeps an existing config's setting
         # The automatic reply to blocked senders: None keeps an existing config's setting (on for a new home), False
         # leaves it off, a string is the reply's text.
         self.blocked = blocked
@@ -462,6 +465,9 @@ class Init:
             cfg["advisories"] = {"repos": self.advisories}
         if self.backup:
             cfg["backup"] = self.backup
+        timesheet = {} if self.timesheet else (self.existing() or {}).get("timesheet")  # an existing home keeps its own
+        if timesheet not in (None, False):
+            cfg["timesheet"] = timesheet
         blocked = {"reply": self.blocked} if isinstance(self.blocked, str) else {} if self.blocked is None else None
         if self.blocked is None and self.existing() is not None:
             blocked = self.existing().get("blocked")  # an existing home keeps its own
@@ -802,6 +808,9 @@ def cli(argv, **kw):
     ap.add_argument("--backup", metavar="FOLDER_URL",
                     help="keep a daily snapshot of the config and state files in this Docs & Files folder "
                          "(https://3.basecamp.com/<account>/buckets/<project>/vaults/<folder>)")
+    ap.add_argument("--timesheet", action="store_true",
+                    help="post the agent's active time on each to-do or card it names with sync.py timesheet start "
+                         "to that timesheet, once per day (a re-run without it keeps an existing setting)")
     ap.add_argument("--blocked-reply", metavar="TEXT",
                     help="the automatic reply to someone the sync does not listen to who @mentions, Pings or assigns "
                          "the --login (default: a short line saying the agent cannot act on it)")
@@ -828,7 +837,7 @@ def cli(argv, **kw):
              create_missing=a.create_missing_columns, dry=a.dry_run, force=a.force,
              cards=not a.no_cards, assign_captain=not a.no_assign_captain, todos=a.todos, reports=a.reports, every_line=a.every_line,
              checkins=a.checkins, releases=not a.no_releases, inbox=a.inbox, session_alert=a.session_alert, pings=a.pings,
-             assigned_todos=a.assigned_todos, assigned_anywhere=a.assigned_todos_anywhere, assigned_cards=a.assigned_cards, mentions_anywhere=a.mentions_anywhere, advisories=a.advisories, backup=a.backup, chats=not a.no_chats, no_keyring=a.no_keyring,
+             assigned_todos=a.assigned_todos, assigned_anywhere=a.assigned_todos_anywhere, assigned_cards=a.assigned_cards, mentions_anywhere=a.mentions_anywhere, advisories=a.advisories, backup=a.backup, timesheet=a.timesheet, chats=not a.no_chats, no_keyring=a.no_keyring,
              blocked=False if a.no_blocked_reply else a.blocked_reply, replace_people=a.replace_people, **kw).main()
     except Refuse as e:
         print(e, file=sys.stderr)

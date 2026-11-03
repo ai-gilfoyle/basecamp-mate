@@ -11,7 +11,8 @@ the account, kept in chats.json), chat asks ("ask_chat"), check-in answering
 ("checkins"), release announcements ("releases"), decision to-dos ("todos"),
 reports ("message_board"), Pings ("pings": the owner's direct messages to the agent's
 login), to-do requests ("assigned_todos": to-dos the owner assigns to the agent's login),
-inbox delivery ("inbox"), the session alert ("session_alert"), the state backup ("backup") and notifications (on with a "profile": every run reads the agent
+inbox delivery ("inbox"), the session alert ("session_alert"), the state backup ("backup"), timesheets ("timesheet":
+the agent's active time per to-do or card per day, `sync.py timesheet`) and notifications (on with a "profile": every run reads the agent
 login's notifications and boosts and runs the reader for each thread that changed, and
 records the owner's unmonitored input; `sync.py unmonitored` keeps their keys).
 prompts/base.md is the agent's side of each behavior.
@@ -33,12 +34,15 @@ Deterministic, no model calls. Safety bounds, enforced here:
     "mentions": {"scope": "account"}, anywhere in the account, and comments on threads
     it follows there); with "backup" on, the config and state files are uploaded to
     its Docs & Files folder (a changed file as a new version of its upload there);
+    with "timesheet" on, timesheet entries go only on the to-dos and cards the agent
+    names with `sync.py timesheet start` (or tracks under the same key);
   - nothing is ever deleted, trashed or archived, except the acting user's own 👀
     boost once a question is answered; the timer run posts no comment, and its only
     writes besides the card mirror are 👀/👍 acknowledgement boosts, marking the agent
     login's handled notifications read, a Message Board announcement per new GitHub
     release, and, with "session_alert", one chat line to the owner while the firstmate
-    session is down and inbox notes wait (once per outage);
+    session is down and inbox notes wait (once per outage), and, with "timesheet", one
+    timesheet entry per piece of work per finished day (timesheet.json keeps each one posted);
   - only the explicit commands post, run by the agent, and each refuses to when no
     profile is set or the profile signs in as the owner;
   - id maps (map.json, todos.json, ...) make re-runs update or skip instead of
@@ -66,6 +70,8 @@ Usage: sync.py --home <home> --config <config.json> [--all] [--dry-run] [--inclu
        sync.py post-message --home <home> --config <config.json> --subject <text> --body-file <file> [--dry-run]
        sync.py unmonitored list|handle|forget --home <home> --config <config.json> [--key <key>] [--decision <text>] [--dry-run]
        sync.py backup --home <home> --config <config.json> [--dry-run]
+       sync.py timesheet start --home <home> --config <config.json> --key <key> [--on <to-do or card URL>] --workdir <dir>... [--dry-run]
+       sync.py timesheet stop|post --home <home> --config <config.json> [--key <key>] [--dry-run]
        sync.py behaviors --home <home> --config <config.json>
        sync.py access --home <home> --config <config.json>      (who gets through to the agent, and where)
        sync.py setup [--answers <file.json>] [--yes]      (guided; also bin/basecamp-mate setup)
@@ -332,6 +338,34 @@ def unmonitored_cli(argv, runner):
                    else s.unmonitored_forget(a.key), runner)
 
 
+def timesheet_cli(argv, runner):
+    sub = argv[:1][0] if argv else None
+    descs = {"start": "Count the agent's active time on a piece of work from now, for the timesheet of its to-do or card.",
+             "stop": "Stop counting the agent's active time on a piece of work.",
+             "post": "Post the finished days' active time that is not posted yet now (--dry-run prints what it would post)."}
+    if sub not in descs:
+        print("usage: sync.py timesheet {start,stop,post} --home <home> --config <config.json> ...", file=sys.stderr)
+        return 2
+    ap = common(f"sync.py timesheet {sub}", descs[sub])
+    if sub in ("start", "stop"):
+        ap.add_argument("--key", required=True, help="a stable key for the work, e.g. the task id")
+    if sub == "start":
+        ap.add_argument("--on", help="the to-do's or card's URL its entries go on (default: the to-do tracked "
+                                     "under --key, else its mirrored card)")
+        ap.add_argument("--workdir", action="append", default=[],
+                        help="the directory the work's Claude Code session runs in (repeatable)")
+    ap.add_argument("--dry-run", action="store_true")
+    a = ap.parse_args(argv[1:])
+    s = Sync(a.home, a.config, runner=runner)
+    if not s.behaviors["timesheet"].on:
+        print('sync.py timesheet: no "timesheet" in the config: add "timesheet": {} (or init --timesheet)', file=sys.stderr)
+        return 2
+    calls = {"start": lambda s: s.timesheet_start(a.key, a.on, a.workdir),
+             "stop": lambda s: s.timesheet_stop(a.key),
+             "post": lambda s: s.behaviors["timesheet"].run()}
+    return command(a, f"timesheet {sub}", calls[sub], runner)
+
+
 def cli(argv=None, runner=subprocess.run):
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ["init"]:
@@ -347,6 +381,8 @@ def cli(argv=None, runner=subprocess.run):
         return todo_cli(argv[1:], runner)
     if argv[:1] == ["unmonitored"]:
         return unmonitored_cli(argv[1:], runner)
+    if argv[:1] == ["timesheet"]:
+        return timesheet_cli(argv[1:], runner)
     if argv[:1] == ["reply"]:
         ap = common("sync.py reply", "Answer a captain question where it was asked, then remove the 👀.")
         ap.add_argument("--recording", required=True, type=int, help="the question comment's, chat line's or Ping line's id")
