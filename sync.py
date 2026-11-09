@@ -393,8 +393,8 @@ def cli(argv=None, runner=subprocess.run):
         ap.add_argument("--again", action="store_true", help="post even though this question was already answered")
         ap.add_argument("--dry-run", action="store_true")
         a = ap.parse_args(argv[1:])
-        text = None if a.boost is not None else read(a.body_file)
-        return command(a, f"reply {a.recording}", lambda s: s.reply(a.recording, text, again=a.again, boost=a.boost), runner)
+        return command(a, f"reply {a.recording}", lambda s: s.reply(
+            a.recording, None if a.boost is not None else read(a.body_file), again=a.again, boost=a.boost), runner)
     if argv[:1] in (["watch"], ["unwatch"]):
         what = argv[0]
         ap = common(f"sync.py {what}", "Watch one chat in any project of the account: relay the listened-to people's lines "

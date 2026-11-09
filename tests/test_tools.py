@@ -817,6 +817,13 @@ class ReplyBoost(ToolBase):
             with redirect_stdout(io.StringIO()), unittest.mock.patch("sys.stderr", io.StringIO()):
                 cli("reply", "--recording", "70", "--boost", "Hi", "--body-file", "BODY")
 
+    def test_cli_unreadable_body_file_is_logged_as_failed(self):
+        self.recorded("chat")
+        missing = os.path.join(self.tmp, "missing.md")
+        self.assertEqual(Cli.run_cli.__get__(self)("reply", "--recording", "70", "--body-file", missing)[0], 1)
+        self.assertIn("FAILED reply 70 FileNotFoundError", open(os.path.join(self.cfgdir, "sync.log")).read())
+        self.assertEqual(self.stub.chat_posts(), [])
+
 
 class Layers(unittest.TestCase):
     def test_behaviors_never_call_a_cli_directly(self):
