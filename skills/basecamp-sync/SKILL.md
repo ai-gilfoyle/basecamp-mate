@@ -252,6 +252,9 @@ that read.
 - `question`, `chat-question`: if it only asks for information within this home's scope,
   answer it directly:
   `python3 $SYNC/sync.py reply --home <home> --config <home>/data/basecamp-sync/config.json --recording <comment or line id> --body-file <file>`.
+  When the whole answer is an acknowledgement, a thanks, "done" or a plain yes, answer with a
+  boost on it instead of a comment: `--boost "<text>"` in place of `--body-file` (16
+  characters or fewer, for example `--boost "Done ✅"`). Every `reply` takes either.
   If it asks for a decision or gives an instruction, relay it to the main firstmate first,
   like a comment.
   A `chat-question` from a chat set to `every_line` may be any line the owner wrote there;
@@ -376,7 +379,7 @@ The main firstmate's own home answers its questions itself rather than relaying.
 Acknowledgements are the sync's. With the config's `acknowledge` `read` (a new home: 👀) it
 goes on everything read; without it, 👀 on a captain question means "looking into it" and
 👍 on a comment or card means "got it". `sync.py reply` removes the read boost once
-answered. With `acknowledge` `decided` (a new home: 👍), `todo complete` and `todo subtask`
+answered, with a comment or line or with `--boost`. With `acknowledge` `decided` (a new home: 👍), `todo complete` and `todo subtask`
 put it on each deciding comment once the decision is carried out. A boost on a decision
 step (a subtask) arrives as a `boost` with `surface` `subtask` and `step`: that decision's
 answer. Don't add or remove acknowledgements by hand.

@@ -39,6 +39,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 THUMBS, EYES = "\U0001F44D", "\U0001F440"
+BOOST_MAX = 16  # the most characters a Basecamp boost holds
 AUTHORITY = ("captain", "operator")  # the roles whose word authorizes the agent: a decision or an approval
 # When a scheduled request is done ("schedule" in the config, schedule.json per list): ask the owner, on its due date, or
 # before it.
@@ -1846,7 +1847,7 @@ class Tools:
 
     # --- commands: explicit posts, run by the agent ---
 
-    def reply(self, rid, text, again=False):
+    def reply(self, rid, text=None, again=False, boost=None):
         """Answer the captain's comment or line `rid` where it was made, then take the acting user's 👀 off it.
 
         A card comment is answered with a comment on that card, a chat or Ping line with
@@ -1854,27 +1855,33 @@ class Tools:
         mention) with a comment on that to-do, message or thread (as Markdown, rendered by the CLI). Run only by the relaying agent; the sync
         itself never posts comments. A reply is recorded in the "replied" list and a
         second one is refused unless `again`. A failed post removes nothing, so the
-        👀 stays.
+        👀 stays. With `boost` (text of at most BOOST_MAX characters) the answer is that
+        boost on `rid` itself instead of a comment or line, recorded and followed the same
+        way; longer or empty text is refused (raised) before anything is read or posted.
         """
+        if boost is not None:
+            boost = boost.strip()
+            if not boost or len(boost) > BOOST_MAX:
+                raise ValueError(f"a boost holds 1 to {BOOST_MAX} characters, not {len(boost)}: {boost!r}")
         ping = next((c for c, r in self.load("pings.json", {}).get("pings", {}).items() if rid in r.get("lines", [])), None)
         if ping is not None:
-            return self.reply_ping(ping, rid, text, again)
+            return self.reply_ping(ping, rid, text, again, boost)
         chats = self.load("chats.json", {})
         chat = next((c for c, r in chats.items() if rid in r.get("lines", [])), None)
         todo_key = None
         if chat is None:
             todo_key = next((k for k, r in self.load("todos.json", {}).items() if rid in r.get("comments", [])), None)
         if todo_key is not None:
-            return self.reply_todo(todo_key, rid, text, again)
+            return self.reply_todo(todo_key, rid, text, again, boost)
         post = None
         if chat is None:
             post = next((k for k, r in self.load("messages.json", {}).get("posts", {}).items() if rid in r.get("comments", [])), None)
         if post is not None:
-            return self.reply_message(post, rid, text, again)
+            return self.reply_message(post, rid, text, again, boost)
         thread = None if chat is not None else next(
             (k for k, r in self.load("threads.json", {}).items() if rid in r.get("comments", [])), None)
         if thread is not None:
-            return self.reply_thread(thread, rid, text, again)
+            return self.reply_thread(thread, rid, text, again, boost)
         bucket = None
         if chat is not None:
             store, rec = ("chats.json", chats), chats[chat]
@@ -1894,19 +1901,20 @@ class Tools:
             return False
         if self.refused(f"reply {rid}"):
             return False
-        body = render_reply(text)
         if self.dry:
-            self.log(f"dry reply {rid}: post in {where}, then remove {EYES}")
+            self.log(f"dry reply {rid}: {self.reply_plan(rid, f'post in {where}', boost)}, then remove {EYES}")
             return False
-        payload = {"content": body, "content_type": "text/html"} if chat is not None else {"content": body}
-        self.bc("api", "post", target, "-d", json.dumps(payload), project=bucket)
+        payload = {"content": render_reply(text or "")}
+        if chat is not None:
+            payload["content_type"] = "text/html"
+        self.reply_send(rid, f"in {where}", boost, bucket,
+                        lambda: self.bc("api", "post", target, "-d", json.dumps(payload), project=bucket))
         rec.setdefault("replied", []).append(rid)
         self.save_json(*store)
-        self.log(f"reply {rid}: posted in {where}")
         self.remove_eyes(rid, bucket)
         return True
 
-    def reply_ping(self, chat, rid, text, again):
+    def reply_ping(self, chat, rid, text, again, boost=None):
         """Answer the owner's line `rid` in Ping chat `chat` with a new line there, in the Ping's own bucket."""
         rec = self.load("pings.json", {})["pings"][chat]
         if rid in rec.get("replied", []) and not again:
@@ -1916,18 +1924,18 @@ class Tools:
             return False
         bucket = rec["bucket"]
         if self.dry:
-            self.log(f"dry reply {rid}: post in ping {chat}, then remove {EYES}")
+            self.log(f"dry reply {rid}: {self.reply_plan(rid, f'post in ping {chat}', boost)}, then remove {EYES}")
             return False
-        self.bc("api", "post", f"/buckets/{bucket}/chats/{chat}/lines.json",
-                "-d", json.dumps({"content": render_reply(text), "content_type": "text/html"}))
+        self.reply_send(rid, f"in ping {chat}", boost, bucket, lambda: self.bc(
+            "api", "post", f"/buckets/{bucket}/chats/{chat}/lines.json",
+            "-d", json.dumps({"content": render_reply(text), "content_type": "text/html"})))
         state = self.load("pings.json", {})
         state["pings"][chat].setdefault("replied", []).append(rid)
         self.save_json("pings.json", state)
-        self.log(f"reply {rid}: posted in ping {chat}")
         self.remove_eyes(rid, bucket)
         return True
 
-    def reply_todo(self, key, rid, text, again):
+    def reply_todo(self, key, rid, text, again, boost=None):
         with self.locked("todos.json"):
             rec = self.load("todos.json", {})[key]
             if rid in rec.get("replied", []) and not again:
@@ -1936,18 +1944,18 @@ class Tools:
         if self.refused(f"reply {rid}"):
             return False
         if self.dry:
-            self.log(f"dry reply {rid}: comment on todo {key}, then remove {EYES}")
+            self.log(f"dry reply {rid}: {self.reply_plan(rid, f'comment on todo {key}', boost)}, then remove {EYES}")
             return False
-        self.bc("comments", "create", str(rec["todo"]), "-", input=text, project=rec.get("bucket"))
+        self.reply_send(rid, f"on todo {key}", boost, rec.get("bucket"), lambda: self.bc(
+            "comments", "create", str(rec["todo"]), "-", input=text, project=rec.get("bucket")))
         with self.locked("todos.json"):
             state = self.load("todos.json", {})
             state[key].setdefault("replied", []).append(rid)
             self.save_json("todos.json", state)
-        self.log(f"reply {rid}: posted on todo {key}")
         self.remove_eyes(rid, rec.get("bucket"))
         return True
 
-    def reply_message(self, mid, rid, text, again):
+    def reply_message(self, mid, rid, text, again, boost=None):
         """Answer the owner's comment `rid` on message `mid` with a comment there (Markdown)."""
         with self.locked("messages.json"):
             rec = self.load("messages.json", {})["posts"][mid]
@@ -1957,18 +1965,17 @@ class Tools:
         if self.refused(f"reply {rid}"):
             return False
         if self.dry:
-            self.log(f"dry reply {rid}: comment on message {mid}, then remove {EYES}")
+            self.log(f"dry reply {rid}: {self.reply_plan(rid, f'comment on message {mid}', boost)}, then remove {EYES}")
             return False
-        self.bc("comments", "create", mid, "-", input=text)
+        self.reply_send(rid, f"on message {mid}", boost, None, lambda: self.bc("comments", "create", mid, "-", input=text))
         with self.locked("messages.json"):
             state = self.load("messages.json", {})
             state["posts"][mid].setdefault("replied", []).append(rid)
             self.save_json("messages.json", state)
-        self.log(f"reply {rid}: posted on message {mid}")
         self.remove_eyes(rid)
         return True
 
-    def reply_thread(self, key, rid, text, again):
+    def reply_thread(self, key, rid, text, again, boost=None):
         """Answer the owner's comment `rid` on thread `key` (threads.json) with a comment (Markdown) there, in its bucket."""
         rec = self.load("threads.json", {})[key]
         if rid in rec.get("replied", []) and not again:
@@ -1978,15 +1985,30 @@ class Tools:
             return False
         where = f"{rec.get('parent_type') or 'thread'} {rec['thread']}"
         if self.dry:
-            self.log(f"dry reply {rid}: comment on {where}, then remove {EYES}")
+            self.log(f"dry reply {rid}: {self.reply_plan(rid, f'comment on {where}', boost)}, then remove {EYES}")
             return False
-        self.bc("comments", "create", str(rec["thread"]), "-", input=text, project=rec.get("bucket"))
+        self.reply_send(rid, f"on {where}", boost, rec.get("bucket"), lambda: self.bc(
+            "comments", "create", str(rec["thread"]), "-", input=text, project=rec.get("bucket")))
         state = self.load("threads.json", {})
         state[key].setdefault("replied", []).append(rid)
         self.save_json("threads.json", state)
-        self.log(f"reply {rid}: posted on {where}")
         self.remove_eyes(rid, rec.get("bucket"))
         return True
+
+    @staticmethod
+    def reply_plan(rid, post, boost):
+        """What a dry-run reply to `rid` would do: `post`, or boost `rid` with `boost`."""
+        return post if boost is None else f"boost {rid} with {boost!r}"
+
+    def reply_send(self, rid, where, boost, bucket, post):
+        """Answer `rid`: run `post` (the comment or line, `where` it goes), or with `boost`, boost `rid` itself with that
+        text in `bucket` (default the project) through `boost`, which posts no second one with the same text."""
+        if boost is None:
+            post()
+            self.log(f"reply {rid}: posted {where}")
+        else:
+            self.boost(self.acting_id(), rid, boost, bucket)
+            self.log(f"reply {rid}: boosted {boost!r} ({where})")
 
     def remove_eyes(self, rid, bucket=None):
         """Take the acting user's read acknowledgement (👀, or the config's "acknowledge" "read") off `rid`."""

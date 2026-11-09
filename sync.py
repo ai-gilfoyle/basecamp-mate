@@ -54,7 +54,7 @@ the same project (or Pings, account-wide to-do requests or account-wide mentions
 
 Usage: sync.py --home <home> --config <config.json> [--all] [--dry-run] [--include-prereleases] [--allow-duplicate]
        sync.py status      (the runs recorded on this computer; also bin/basecamp-mate status)
-       sync.py reply --home <home> --config <config.json> --recording <comment, chat line or Ping line id> --body-file <file> [--again] [--dry-run]
+       sync.py reply --home <home> --config <config.json> --recording <comment, chat line or Ping line id> (--body-file <file> | --boost <text>) [--again] [--dry-run]
        sync.py watch --home <home> --config <config.json> --chat <chat URL> [--after-line <line id>] [--until YYYY-MM-DD] [--dry-run]
        sync.py unwatch --home <home> --config <config.json> --chat <chat URL> [--dry-run]
        sync.py ask --home <home> --config <config.json> --body-file <file> [--dry-run]
@@ -83,7 +83,7 @@ from datetime import datetime, timezone
 
 import behaviors, runs
 from behaviors import COLUMNS, render_decision, render_release, inline_md  # noqa: F401
-from tools import (Tools, THUMBS, EYES, is_due, render_reply, is_emoji, is_thumbs_up,  # noqa: F401
+from tools import (Tools, THUMBS, EYES, BOOST_MAX, is_due, render_reply, is_emoji, is_thumbs_up,  # noqa: F401
                    parse_lavish, parse_show, task_item, none, parse_chat_url)
 
 
@@ -384,13 +384,17 @@ def cli(argv=None, runner=subprocess.run):
     if argv[:1] == ["timesheet"]:
         return timesheet_cli(argv[1:], runner)
     if argv[:1] == ["reply"]:
-        ap = common("sync.py reply", "Answer a captain question where it was asked, then remove the 👀.")
+        ap = common("sync.py reply", "Answer a captain question where it was asked, with a comment, line or boost, then remove the 👀.")
         ap.add_argument("--recording", required=True, type=int, help="the question comment's, chat line's or Ping line's id")
-        ap.add_argument("--body-file", required=True, help="plain-text answer (Markdown for a to-do comment)")
+        how = ap.add_mutually_exclusive_group(required=True)
+        how.add_argument("--body-file", help="plain-text answer (Markdown for a to-do comment)")
+        how.add_argument("--boost", help=f"answer with a boost of this text ({BOOST_MAX} characters or fewer) on the "
+                                          "recording instead of a comment, e.g. a thanks, \"done\" or a plain yes")
         ap.add_argument("--again", action="store_true", help="post even though this question was already answered")
         ap.add_argument("--dry-run", action="store_true")
         a = ap.parse_args(argv[1:])
-        return command(a, f"reply {a.recording}", lambda s: s.reply(a.recording, read(a.body_file), again=a.again), runner)
+        text = None if a.boost is not None else read(a.body_file)
+        return command(a, f"reply {a.recording}", lambda s: s.reply(a.recording, text, again=a.again, boost=a.boost), runner)
     if argv[:1] in (["watch"], ["unwatch"]):
         what = argv[0]
         ap = common(f"sync.py {what}", "Watch one chat in any project of the account: relay the listened-to people's lines "
