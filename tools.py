@@ -1907,11 +1907,11 @@ class Tools:
         payload = {"content": render_reply(text or "")}
         if chat is not None:
             payload["content_type"] = "text/html"
-        self.reply_send(rid, f"in {where}", boost, bucket,
+        answer = self.reply_send(rid, f"in {where}", boost, bucket,
                         lambda: self.bc("api", "post", target, "-d", json.dumps(payload), project=bucket))
         rec.setdefault("replied", []).append(rid)
         self.save_json(*store)
-        self.remove_eyes(rid, bucket, boost)
+        self.remove_eyes(rid, bucket, answer)
         return True
 
     def reply_ping(self, chat, rid, text, again, boost=None):
@@ -1926,13 +1926,13 @@ class Tools:
         if self.dry:
             self.log(f"dry reply {rid}: {self.reply_plan(rid, f'post in ping {chat}', boost)}, then remove {EYES}")
             return False
-        self.reply_send(rid, f"in ping {chat}", boost, bucket, lambda: self.bc(
+        answer = self.reply_send(rid, f"in ping {chat}", boost, bucket, lambda: self.bc(
             "api", "post", f"/buckets/{bucket}/chats/{chat}/lines.json",
             "-d", json.dumps({"content": render_reply(text), "content_type": "text/html"})))
         state = self.load("pings.json", {})
         state["pings"][chat].setdefault("replied", []).append(rid)
         self.save_json("pings.json", state)
-        self.remove_eyes(rid, bucket, boost)
+        self.remove_eyes(rid, bucket, answer)
         return True
 
     def reply_todo(self, key, rid, text, again, boost=None):
@@ -1946,13 +1946,13 @@ class Tools:
         if self.dry:
             self.log(f"dry reply {rid}: {self.reply_plan(rid, f'comment on todo {key}', boost)}, then remove {EYES}")
             return False
-        self.reply_send(rid, f"on todo {key}", boost, rec.get("bucket"), lambda: self.bc(
+        answer = self.reply_send(rid, f"on todo {key}", boost, rec.get("bucket"), lambda: self.bc(
             "comments", "create", str(rec["todo"]), "-", input=text, project=rec.get("bucket")))
         with self.locked("todos.json"):
             state = self.load("todos.json", {})
             state[key].setdefault("replied", []).append(rid)
             self.save_json("todos.json", state)
-        self.remove_eyes(rid, rec.get("bucket"), boost)
+        self.remove_eyes(rid, rec.get("bucket"), answer)
         return True
 
     def reply_message(self, mid, rid, text, again, boost=None):
@@ -1967,12 +1967,12 @@ class Tools:
         if self.dry:
             self.log(f"dry reply {rid}: {self.reply_plan(rid, f'comment on message {mid}', boost)}, then remove {EYES}")
             return False
-        self.reply_send(rid, f"on message {mid}", boost, None, lambda: self.bc("comments", "create", mid, "-", input=text))
+        answer = self.reply_send(rid, f"on message {mid}", boost, None, lambda: self.bc("comments", "create", mid, "-", input=text))
         with self.locked("messages.json"):
             state = self.load("messages.json", {})
             state["posts"][mid].setdefault("replied", []).append(rid)
             self.save_json("messages.json", state)
-        self.remove_eyes(rid, None, boost)
+        self.remove_eyes(rid, None, answer)
         return True
 
     def reply_thread(self, key, rid, text, again, boost=None):
@@ -1987,12 +1987,12 @@ class Tools:
         if self.dry:
             self.log(f"dry reply {rid}: {self.reply_plan(rid, f'comment on {where}', boost)}, then remove {EYES}")
             return False
-        self.reply_send(rid, f"on {where}", boost, rec.get("bucket"), lambda: self.bc(
+        answer = self.reply_send(rid, f"on {where}", boost, rec.get("bucket"), lambda: self.bc(
             "comments", "create", str(rec["thread"]), "-", input=text, project=rec.get("bucket")))
         state = self.load("threads.json", {})
         state[key].setdefault("replied", []).append(rid)
         self.save_json("threads.json", state)
-        self.remove_eyes(rid, rec.get("bucket"), boost)
+        self.remove_eyes(rid, rec.get("bucket"), answer)
         return True
 
     @staticmethod
@@ -2007,16 +2007,17 @@ class Tools:
             post()
             self.log(f"reply {rid}: posted {where}")
         else:
-            self.boost(self.acting_id(), rid, boost, bucket)
+            answer = self.boost(self.acting_id(), rid, boost, bucket)
             self.log(f"reply {rid}: boosted {boost!r} ({where})")
+            return answer
 
     def remove_eyes(self, rid, bucket=None, answer=None):
-        """Take the acting user's read acknowledgement (👀, or the config's "acknowledge" "read") off `rid`, unless
-        `answer`, the boost that answered `rid`, is that acknowledgement."""
+        """Take the acting user's read acknowledgement (👀, or the config's "acknowledge" "read") off `rid`, except the
+        boost with id `answer`, the one that answered `rid`."""
         emoji = self.read_ack()
-        if answer is not None and is_emoji(answer, emoji):
-            return
         for b in self.boosts_by(self.acting_id(), rid, emoji, bucket):
+            if answer is not None and b.get("id") == answer:
+                continue
             self.bc("api", "delete", f"/buckets/{bucket or self.project}/boosts/{b.get('id')}.json")
             self.log(f"reply {rid}: removed {emoji} boost {b.get('id')}")
 

@@ -2,7 +2,7 @@
 
 The basecamp CLI is stubbed; nothing touches the network.
 """
-import io, json, os, sys, unittest, unittest.mock
+import io, itertools, json, os, sys, unittest, unittest.mock
 from contextlib import redirect_stdout
 from types import SimpleNamespace
 
@@ -776,15 +776,15 @@ class ReplyBoost(ToolBase):
                 self.assertEqual(self.stub.posted()[1:], [("70", "Done")])
 
     def test_a_boost_that_is_the_read_acknowledgement_stays_as_the_answer(self):
-        for kind in self.KINDS:
-            with self.subTest(kind):
+        for kind, (ack, answer) in itertools.product(self.KINDS, [("\u2705", "\u2705"), ("\U0001F44D\U0001F3FD", "\U0001F44D")]):
+            with self.subTest(kind=kind, ack=ack):
                 self.stub = TodoStub()
-                self.cfg(acknowledge={"read": "\u2705"})
+                self.cfg(acknowledge={"read": ack})
                 name, _ = self.recorded(kind)
-                self.stub.boosts["70"] = [boost(1, who=ACTING, content="\u2705")]
-                self.assertTrue(self.sync().reply(70, boost="\u2705"))
+                self.stub.boosts["70"] = [boost(1, who=ACTING, content=ack)]
+                self.assertTrue(self.sync().reply(70, boost=answer))
                 self.assertEqual(self.stub.deletes(), [])
-                self.assertEqual([b["content"] for b in self.stub.boosts["70"]], ["\u2705"])
+                self.assertEqual([b["content"] for b in self.stub.boosts["70"]], [ack])
                 self.assertEqual(self.replied(name), [[70]])
 
     def test_text_over_the_limit_or_empty_is_refused_with_no_basecamp_call(self):
