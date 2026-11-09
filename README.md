@@ -82,7 +82,7 @@ policy. Each does one thing to the configured account and project:
 | message comment reader | reader | records the owner's new comments on the agent's own recent Message Board posts as `message-comment` |
 | boost readers | reader | record the owner's new boosts, with their text, on every monitored surface as `boost` (below); a boost on the agent login's own recording only once its received-boosts feed lists it |
 | unmonitored recorder | reader | records owner input that no behavior handles as `unmonitored`, once per kind of thing (below) |
-| `sync.py reply` | command | answers a recorded comment, chat line, Ping line, to-do comment, thread comment or mention where it was made, then removes the 👀 |
+| `sync.py reply` | command | answers a recorded comment, chat line, Ping line, to-do comment, thread comment or mention where it was made (with `--boost`, as a boost of 16 characters or fewer on it), then removes the 👀 |
 | `sync.py ask` | command | posts a new chat line @mentioning the owner |
 | `sync.py watch`, `sync.py unwatch` | command | starts or stops watching one chat in any project of the account (kept in `chats.json`, not the config): its listened-to lines after a given line are recorded as `chat-question` (see "Chat watches") |
 | `sync.py answer` | command | answers a check-in question, once per question per day |
@@ -869,7 +869,14 @@ basecamp-mate checkout, `HOME` its firstmate home):
   lists, quotes and code blocks, everything else HTML-escaped) as a comment on that card as the acting user, then removes the acting user's 👀 from the question; no
   👍 is added. The question id is recorded in the card's `replied` list in `map.json` and a
   second reply is refused unless `--again` is passed. A failed post removes nothing, so the
-  👀 stays. With no profile, or a profile signed in as the captain, it posts nothing;
+  👀 stays. `--boost "<text>"` in place of `--body-file` answers with a boost of that text
+  on the question itself instead of a comment, for an answer that is only an
+  acknowledgement, a thanks, "done" or a plain yes. It works the same way for every record
+  `reply` takes (card, chat, Ping, to-do, message and thread comments and lines): it is
+  recorded in `replied`, a second reply needs `--again`, and the 👀 comes off (unless that
+  boost is the read acknowledgement itself, which then stays as the answer). Text over
+  16 characters (Basecamp's limit for a boost), or empty text, is refused before anything
+  is read or posted, and the command exits 1. With no profile, or a profile signed in as the captain, it posts nothing;
   `--dry-run` logs the plan only. The acting user's own replies are never relayed, since
   only the captain's comments are. Boosts are posted via `POST /buckets/<project>/recordings/<id>/boosts.json`. The
   acting identity is read from `/my/profile.json` once per run; with no `profile`, or a

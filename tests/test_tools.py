@@ -2,7 +2,7 @@
 
 The basecamp CLI is stubbed; nothing touches the network.
 """
-import io, json, os, sys, unittest
+import io, itertools, json, os, sys, unittest, unittest.mock
 from contextlib import redirect_stdout
 from types import SimpleNamespace
 
@@ -729,6 +729,100 @@ class MessageComments(ToolBase):
         self.assertEqual(rid, "basecamp-message-comment-30")
         self.assertEqual(body.splitlines()[:3], ["Basecamp comment from the captain on your message 'Report: deploy':",
                                                  "Rerun it with the new flag", "https://x/todos/c30"])
+
+
+class ReplyBoost(ToolBase):
+    """`reply --boost`: the answer is a boost on the recorded comment or line itself, for every record kind."""
+
+    KINDS = {  # kind: (state file, its content with recording 70 recorded, the bucket the boost goes in)
+        "card": ("map.json", {"t1": {"card": 9, "comments": [70]}}, "22222222"),
+        "chat": ("chats.json", {"5": {"lines": [70], "bucket": 77}}, "77"),
+        "ping": ("pings.json", {"pings": {"6": {"lines": [70], "bucket": 88}}}, "88"),
+        "todo": ("todos.json", {"k": {"todo": 11, "comments": [70], "bucket": 55}}, "55"),
+        "message": ("messages.json", {"posts": {"20": {"comments": [70]}}}, "22222222"),
+        "thread": ("threads.json", {"th": {"thread": 12, "comments": [70], "bucket": 66}}, "66"),
+    }
+
+    def recorded(self, kind):
+        for other, _, _ in self.KINDS.values():
+            if os.path.exists(os.path.join(self.cfgdir, other)):
+                os.remove(os.path.join(self.cfgdir, other))
+        name, state, bucket = self.KINDS[kind]
+        self.side(name, state)
+        self.stub.boosts["70"] = [boost(1, who=ACTING, content="\U0001F440")]
+        return name, bucket
+
+    def replied(self, name):
+        state = json.load(open(os.path.join(self.cfgdir, name)))
+        state = state.get("posts") or state.get("pings") or state
+        return [r.get("replied") for r in state.values()]
+
+    def test_each_kind_boosts_the_recording_removes_the_eyes_and_records_the_reply(self):
+        for kind in self.KINDS:
+            with self.subTest(kind):
+                self.stub = TodoStub()
+                name, bucket = self.recorded(kind)
+                self.assertTrue(self.sync().reply(70, boost=" Thanks! "))
+                self.assertEqual(self.stub.posted(), [("70", "Thanks!")])
+                self.assertEqual([c[2] for c in self.stub.calls if c[:2] == ["api", "post"]],
+                                 [f"/buckets/{bucket}/recordings/70/boosts.json"])
+                self.assertEqual(self.stub.made("comments create"), [])
+                self.assertEqual(self.stub.deletes(), [f"/buckets/{bucket}/boosts/1.json"])
+                self.assertEqual([b["content"] for b in self.stub.boosts["70"]], ["Thanks!"])
+                self.assertEqual(self.replied(name), [[70]])
+                self.assertFalse(self.sync().reply(70, boost="Done"))
+                self.assertEqual(len(self.stub.posted()), 1)
+                self.assertTrue(self.sync().reply(70, boost="Done", again=True))
+                self.assertEqual(self.stub.posted()[1:], [("70", "Done")])
+
+    def test_a_boost_that_is_the_read_acknowledgement_stays_as_the_answer(self):
+        for kind, (ack, answer) in itertools.product(self.KINDS, [("\u2705", "\u2705"), ("\U0001F44D\U0001F3FD", "\U0001F44D")]):
+            with self.subTest(kind=kind, ack=ack):
+                self.stub = TodoStub()
+                self.cfg(acknowledge={"read": ack})
+                name, _ = self.recorded(kind)
+                self.stub.boosts["70"] = [boost(1, who=ACTING, content=ack)]
+                self.assertTrue(self.sync().reply(70, boost=answer))
+                self.assertEqual(self.stub.deletes(), [])
+                self.assertEqual([b["content"] for b in self.stub.boosts["70"]], [ack])
+                self.assertEqual(self.replied(name), [[70]])
+
+    def test_text_over_the_limit_or_empty_is_refused_with_no_basecamp_call(self):
+        self.recorded("card")
+        for text in ("x" * 17, "   "):
+            with self.assertRaises(ValueError):
+                self.sync().reply(70, boost=text)
+        self.assertEqual(self.stub.calls, [])
+        self.assertTrue(self.sync().reply(70, boost="y" * 16))
+
+    def test_dry_run_posts_nothing(self):
+        for kind in self.KINDS:
+            with self.subTest(kind):
+                self.stub = TodoStub()
+                name, _ = self.recorded(kind)
+                self.assertFalse(self.sync(dry=True).reply(70, boost="Yes"))
+                self.assertEqual([c for c in self.stub.calls if c[:2] != ["api", "get"]], [])
+                self.assertEqual(self.replied(name), [None])
+
+    def test_cli_boost_or_body_file(self):
+        self.recorded("chat")
+        cli = Cli.run_cli.__get__(self)
+        self.assertEqual(cli("reply", "--recording", "70", "--boost", "x" * 17)[0], 1)
+        self.assertIn("FAILED reply 70 ValueError", open(os.path.join(self.cfgdir, "sync.log")).read())
+        self.assertEqual(self.stub.posted(), [])
+        self.assertEqual(cli("reply", "--recording", "70", "--boost", "Thanks")[0], 0)
+        self.assertEqual(self.stub.posted(), [("70", "Thanks")])
+        self.assertEqual(self.stub.chat_posts(), [])
+        with self.assertRaises(SystemExit):
+            with redirect_stdout(io.StringIO()), unittest.mock.patch("sys.stderr", io.StringIO()):
+                cli("reply", "--recording", "70", "--boost", "Hi", "--body-file", "BODY")
+
+    def test_cli_unreadable_body_file_is_logged_as_failed(self):
+        self.recorded("chat")
+        missing = os.path.join(self.tmp, "missing.md")
+        self.assertEqual(Cli.run_cli.__get__(self)("reply", "--recording", "70", "--body-file", missing)[0], 1)
+        self.assertIn("FAILED reply 70 FileNotFoundError", open(os.path.join(self.cfgdir, "sync.log")).read())
+        self.assertEqual(self.stub.chat_posts(), [])
 
 
 class Layers(unittest.TestCase):
