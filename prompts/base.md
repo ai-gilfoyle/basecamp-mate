@@ -111,7 +111,8 @@ person a record's time, quote its `at_local` (or `created_at_local`), the owner'
 time with its zone, not the UTC `at`. The wake check
 still fires on a FAILED line in `sync.log`. Whatever the defaults say, an answer goes
 where the record was made, through `python3 SYNC/sync.py reply C --recording <id> --body-file <file>`
-(or the to-do commands for a tracked to-do). By `kind`:
+(or `--boost "<text>"`, 16 characters or fewer, for a boost on it instead of a comment;
+or the to-do commands for a tracked to-do). By `kind`:
 
 - `todo-comment`: the captain commented on a decision to-do, or, with `request: true`, on
   a to-do request, or, with `on` (its title), on a to-do or card you put a decision step on.

@@ -873,7 +873,8 @@ basecamp-mate checkout, `HOME` its firstmate home):
   on the question itself instead of a comment, for an answer that is only an
   acknowledgement, a thanks, "done" or a plain yes. It works the same way for every record
   `reply` takes (card, chat, Ping, to-do, message and thread comments and lines): it is
-  recorded in `replied`, a second reply needs `--again`, and the 👀 comes off. Text over
+  recorded in `replied`, a second reply needs `--again`, and the 👀 comes off (unless that
+  boost is the read acknowledgement itself, which then stays as the answer). Text over
   16 characters (Basecamp's limit for a boost), or empty text, is refused before anything
   is read or posted, and the command exits 1. With no profile, or a profile signed in as the captain, it posts nothing;
   `--dry-run` logs the plan only. The acting user's own replies are never relayed, since
