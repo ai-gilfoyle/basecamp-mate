@@ -1911,7 +1911,7 @@ class Tools:
                         lambda: self.bc("api", "post", target, "-d", json.dumps(payload), project=bucket))
         rec.setdefault("replied", []).append(rid)
         self.save_json(*store)
-        self.remove_eyes(rid, bucket)
+        self.remove_eyes(rid, bucket, boost)
         return True
 
     def reply_ping(self, chat, rid, text, again, boost=None):
@@ -1932,7 +1932,7 @@ class Tools:
         state = self.load("pings.json", {})
         state["pings"][chat].setdefault("replied", []).append(rid)
         self.save_json("pings.json", state)
-        self.remove_eyes(rid, bucket)
+        self.remove_eyes(rid, bucket, boost)
         return True
 
     def reply_todo(self, key, rid, text, again, boost=None):
@@ -1952,7 +1952,7 @@ class Tools:
             state = self.load("todos.json", {})
             state[key].setdefault("replied", []).append(rid)
             self.save_json("todos.json", state)
-        self.remove_eyes(rid, rec.get("bucket"))
+        self.remove_eyes(rid, rec.get("bucket"), boost)
         return True
 
     def reply_message(self, mid, rid, text, again, boost=None):
@@ -1972,7 +1972,7 @@ class Tools:
             state = self.load("messages.json", {})
             state["posts"][mid].setdefault("replied", []).append(rid)
             self.save_json("messages.json", state)
-        self.remove_eyes(rid)
+        self.remove_eyes(rid, None, boost)
         return True
 
     def reply_thread(self, key, rid, text, again, boost=None):
@@ -1992,7 +1992,7 @@ class Tools:
         state = self.load("threads.json", {})
         state[key].setdefault("replied", []).append(rid)
         self.save_json("threads.json", state)
-        self.remove_eyes(rid, rec.get("bucket"))
+        self.remove_eyes(rid, rec.get("bucket"), boost)
         return True
 
     @staticmethod
@@ -2010,9 +2010,12 @@ class Tools:
             self.boost(self.acting_id(), rid, boost, bucket)
             self.log(f"reply {rid}: boosted {boost!r} ({where})")
 
-    def remove_eyes(self, rid, bucket=None):
-        """Take the acting user's read acknowledgement (👀, or the config's "acknowledge" "read") off `rid`."""
+    def remove_eyes(self, rid, bucket=None, answer=None):
+        """Take the acting user's read acknowledgement (👀, or the config's "acknowledge" "read") off `rid`, unless
+        `answer`, the boost that answered `rid`, is that acknowledgement."""
         emoji = self.read_ack()
+        if answer is not None and is_emoji(answer, emoji):
+            return
         for b in self.boosts_by(self.acting_id(), rid, emoji, bucket):
             self.bc("api", "delete", f"/buckets/{bucket or self.project}/boosts/{b.get('id')}.json")
             self.log(f"reply {rid}: removed {emoji} boost {b.get('id')}")

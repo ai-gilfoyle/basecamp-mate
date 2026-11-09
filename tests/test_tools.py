@@ -775,6 +775,18 @@ class ReplyBoost(ToolBase):
                 self.assertTrue(self.sync().reply(70, boost="Done", again=True))
                 self.assertEqual(self.stub.posted()[1:], [("70", "Done")])
 
+    def test_a_boost_that_is_the_read_acknowledgement_stays_as_the_answer(self):
+        for kind in self.KINDS:
+            with self.subTest(kind):
+                self.stub = TodoStub()
+                self.cfg(acknowledge={"read": "\u2705"})
+                name, _ = self.recorded(kind)
+                self.stub.boosts["70"] = [boost(1, who=ACTING, content="\u2705")]
+                self.assertTrue(self.sync().reply(70, boost="\u2705"))
+                self.assertEqual(self.stub.deletes(), [])
+                self.assertEqual([b["content"] for b in self.stub.boosts["70"]], ["\u2705"])
+                self.assertEqual(self.replied(name), [[70]])
+
     def test_text_over_the_limit_or_empty_is_refused_with_no_basecamp_call(self):
         self.recorded("card")
         for text in ("x" * 17, "   "):
