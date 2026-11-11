@@ -1762,7 +1762,7 @@ class Tools:
                 continue  # there before the notification: the thread's history, not new input
             if cid not in known:
                 fresh.append((c, cid in mentions or self.addressed(c.get("content"))))
-        mark = self.awaiting(rec, thread)
+        mark = rec.get("awaiting") or None
         for c, mention in fresh:
             cid = c.get("id", 0)
             if not self.hears(c.get("creator"), bucket=bucket):
@@ -1797,6 +1797,10 @@ class Tools:
             rec.setdefault("comments", []).append(cid)
             rec.setdefault("ack", []).append([cid, self.read_ack(mention or "?" in text)])
             self.log(f"new owner {'mention' if mention else 'comment'} on {rec.get('parent_type') or 'thread'} {thread}: {cid}")
+        if mark is not None and not history(now_iso(), mark.get("until"), slack=0):  # `until` passed, no answer by then
+            rec.pop("awaiting", None)
+            self.log(f"thread {thread}: the answer awaited since {mark.get('at')} did not come by {mark.get('until')}; "
+                     "the mark is cleared")
         self.read_boosts(rec, "thread-comment", {"bucket": int(bucket), "parent": thread, "title": rec.get("title")},
                          bucket=bucket, counted=boost_items(comments), emoji=False)
         self.acknowledge(f"thread {thread}", rec, bucket)
@@ -1804,19 +1808,6 @@ class Tools:
             rec["cursor"] = cursor
             state[key] = rec
             self.save_json("threads.json", state)
-
-    def awaiting(self, rec, thread):
-        """Thread record `rec`'s awaiting mark (`reply --awaiting`) while it lasts, else None; an expired mark is taken
-        off `rec` (logged), so the thread's next save drops it."""
-        mark = rec.get("awaiting")
-        if not mark:
-            return None
-        if history(now_iso(), mark.get("until"), slack=0):  # now is before `until`
-            return mark
-        rec.pop("awaiting", None)
-        self.log(f"thread {thread}: the answer awaited since {mark.get('at')} did not come by {mark.get('until')}; "
-                 "the mark is cleared")
-        return None
 
     def elsewhere(self, bucket, recording, rec=None):
         """{"project": {"id", "name"}} for a record of `recording` in `bucket` when that is another project of the account
@@ -2962,8 +2953,10 @@ def md_inline(text):
 
 
 def answered(comment, mark):
-    """True when comment `comment` came after the agent's reply that set awaiting mark `mark`: after its comment, or (a
-    reply posted as a boost) not before the time it was set."""
+    """True when comment `comment` answers awaiting mark `mark`: posted by its `until` (whenever it is read), and after
+    the agent's reply that set it: after its comment, or (a reply posted as a boost) not before the time it was set."""
+    if history(mark.get("until"), comment.get("created_at"), slack=0):
+        return False  # posted after the mark ended
     if mark.get("comment"):
         return comment.get("id", 0) > mark["comment"]
     return not history(comment.get("created_at"), mark.get("at"), slack=0)

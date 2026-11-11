@@ -100,6 +100,10 @@ class Comments(Base):
 
 
 class Awaiting(Base):
+    def comment_later(self, id, n, **kw):
+        """As Base's, the comment dated now (within the mark) unless `at` says otherwise."""
+        super().comment_later(id, n, **{"at": tools.now_iso(), **kw})
+
     def ask(self, **kw):
         """The agent answers the captain's Reply 9 with a question, awaiting the answer; returns its comment's id."""
         self.mention_thread()
@@ -152,11 +156,23 @@ class Awaiting(Base):
         self.assertNotIn("awaiting", self.threads()[f"{PROJECT}:4"])
         self.assertIn("did not come by 2000-01-01T00:00:00Z; the mark is cleared", self.log())
 
+    def test_an_answer_posted_before_the_end_is_relayed_when_read_after_it(self):
+        mine = self.ask()
+        state = self.threads()
+        state[f"{PROJECT}:4"]["awaiting"]["until"] = "2026-01-01T00:00:00Z"  # passed by the time the reader runs
+        with open(os.path.join(self.cfgdir, "threads.json"), "w") as f:
+            json.dump(state, f)
+        self.assertLess(mine, 2001)
+        self.comment_later(2001, 1, at="2025-12-31T23:59:00Z")
+        self.assertEqual([(r["comment"], r.get("why")) for r in self.pending()], [(9, None), (2001, "awaiting")])
+        self.assertNotIn("awaiting", self.threads()[f"{PROJECT}:4"])
+        self.assertNotIn("did not come by", self.log())
+
     def test_a_boost_answer_awaits_the_next_comment_after_it(self):
         self.assertIsNone(self.ask(boost="which one?"))
         self.assertIsNone(self.threads()[f"{PROJECT}:4"]["awaiting"]["comment"])
         self.comment_later(2001, 1, at="2000-01-01T00:00:00Z")  # dated before the boost: not its answer
-        self.comment_later(2002, 2, at="2099-01-01T00:00:00Z")
+        self.comment_later(2002, 2)
         self.assertEqual([r["comment"] for r in self.pending()], [9, 2002])
 
     def test_dry_run_marks_nothing(self):
