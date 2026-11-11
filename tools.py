@@ -40,6 +40,7 @@ from zoneinfo import ZoneInfo
 
 THUMBS, EYES = "\U0001F44D", "\U0001F440"
 BOOST_MAX = 16  # the most characters a Basecamp boost holds
+AWAIT_DAYS = 7  # how long `reply --awaiting` waits for an answer on a followed thread
 AUTHORITY = ("captain", "operator")  # the roles whose word authorizes the agent: a decision or an approval
 # When a scheduled request is done ("schedule" in the config, schedule.json per list): ask the owner, on its due date, or
 # before it.
@@ -491,7 +492,7 @@ class Tools:
 
     # --- readers: poll Basecamp, append pending records, acknowledge ---
 
-    def read_boosts(self, rec, surface, context, counted=None, always=(), bucket=None, keep=None):
+    def read_boosts(self, rec, surface, context, counted=None, always=(), bucket=None, emoji=True):
         """Record the owner's new boosts on recordings as `boost` records: a boost is an answer.
 
         `counted` is [(recording id, url, boosts_count, creator id)] (see `boost_items`), each
@@ -501,8 +502,9 @@ class Tools:
         always), they are seeded without recording, so turning this on never replays
         history. Each new boost is recorded only as `confirmed` allows: one to retry leaves
         its recording to be read again next run. `bucket` is where the recordings are
-        (default the project). `keep(recording id, boost)`, when given, is False for a boost to
-        skip: it is seen, logged as skipped and never recorded. A dry run records nothing.
+        (default the project). With `emoji` False, a boost whose confirmed content is emoji
+        only (no letter or digit) is seen, logged as skipped and never recorded. A dry run
+        records nothing.
         """
         counts, seen = rec.get("boost_counts"), rec.get("boost_seen")
         seed_counts, seed_seen = counts is None, seen is None
@@ -525,12 +527,6 @@ class Tools:
                 bid = b.get("id")
                 if bid in seen or not self.hears(b.get("booster"), admitted=False, bucket=bucket):
                     continue
-                if keep is not None and not keep(rid, b):
-                    who = (b.get("booster") or {}).get("name") or (b.get("booster") or {}).get("id")
-                    self.log(f"{'dry ' if self.dry else ''}skipped boost {bid} by {who} on {surface} {rid}: emoji only, "
-                             "not on a comment that awaits an answer")
-                    seen.append(bid)
-                    continue
                 if self.dry:
                     self.log(f"dry {surface} {rid}: owner boost {bid}")
                     continue
@@ -541,6 +537,10 @@ class Tools:
                         continue
                 seen.append(bid)
                 if count is None and seed_seen or b is None:
+                    continue
+                if not emoji and emoji_only(b.get("content")):
+                    who = (b.get("booster") or {}).get("name") or (b.get("booster") or {}).get("id")
+                    self.log(f"skipped boost {bid} by {who} on {surface} {rid}: emoji only")
                     continue
                 self.record({"kind": "boost", "surface": surface, **context, "recording": rid, "boost": bid,
                              "text": html.unescape(re.sub(r"<[^>]+>", "", b.get("content", ""))).strip(),
@@ -1719,19 +1719,18 @@ class Tools:
         replayed; a comment such a reader recorded or answered is never recorded here
         again. Each new comment by someone listened to is a
         `mention` record when it is in `mentions` (a notification said so: an @mention, or a
-        Basecamp Reply to the agent's comment) or @mentions the acting user. Any other
-        comment is a `thread-comment` only when the thread awaits an answer (the agent's
-        `reply --awaiting` there, unexpired; the first such comment after that reply is
-        relayed and clears the mark, "why": "awaiting") or the thread is the agent's (it
-        made it, or it is a to-do or card assigned to it, refetched once per read, "why":
-        "yours"); else it is skipped, with one "skipped" line in sync.log and no record and no
-        boost. A relayed comment is queued for a 👀 when it is a mention or
+        Basecamp Reply to the agent's comment) or @mentions the acting user; a comment in
+        `mentions` is recorded even when the cursor has passed it, unless it already was or
+        another reader read past it. Any other comment is a `thread-comment` only when the
+        thread awaits an answer (the agent's `reply --awaiting` there, unexpired; the first
+        such comment after that reply is relayed and clears the mark, "why": "awaiting");
+        else it is skipped, with one "skipped" line in sync.log and no record and no boost.
+        A relayed comment is queued for a 👀 when it is a mention or
         contains "?", a 👍 otherwise. `reply` answers either with a comment on the thread.
         `ptype` and `title` name the thread when the comments do not. The owner's boosts on
         its comments (the agent's replies included) are `boost` records with surface
-        `thread-comment`, except a boost of emoji only (no letter or digit), which is skipped
-        unless it is on the agent's comment that awaits an answer, as the mark stood when the
-        read began. A thread in another project ("mentions": {"scope": "account"}) is
+        `thread-comment`, except a boost of emoji only (no letter or digit), which is
+        skipped. A thread in another project ("mentions": {"scope": "account"}) is
         read the same way, the people heard as in "project_people" for that project, and its
         records carry that `project`. A dry run reads and logs only.
         """
@@ -1754,7 +1753,9 @@ class Tools:
         cursor, fresh = rec["cursor"], []
         for c in sorted(comments, key=lambda c: c.get("id", 0)):
             cid = c.get("id", 0)
-            if cid <= cursor:
+            if cid <= rec["cursor"]:
+                if not new and cid > floor and cid in mentions and cid not in known | set(rec.get("comments", [])):
+                    fresh.append((c, True))
                 continue
             cursor = cid
             if new and since is None and after and history(c.get("created_at"), after):
@@ -1762,15 +1763,6 @@ class Tools:
             if cid not in known:
                 fresh.append((c, cid in mentions or self.addressed(c.get("content"))))
         mark = self.awaiting(rec, thread)
-        boost_mark = mark  # a boost answers the awaiting comment as the mark stood when this read began
-        mine = None
-        if any(not mention and self.hears(c.get("creator"), bucket=bucket) for c, mention in fresh):
-            parent = next(((c.get("parent") or {}).get("type") for c, _ in fresh if (c.get("parent") or {}).get("type")), None)
-            try:
-                mine = self.yours(bucket, thread, parent or rec.get("parent_type"))
-            except RuntimeError as e:
-                self.log(f"thread {thread}: whose it is could not be read, retrying next run: {e}")
-                return
         for c, mention in fresh:
             cid = c.get("id", 0)
             if not self.hears(c.get("creator"), bucket=bucket):
@@ -1778,12 +1770,11 @@ class Tools:
                     self.block(c.get("creator"), bucket, thread, cid, c.get("created_at"), what="comment")
                 continue
             answers = mark is not None and answered(c, mark)
-            why = None if mention else "awaiting" if answers else "yours" if mine else None
-            who = (c.get("creator") or {}).get("name") or (c.get("creator") or {}).get("id")
-            if not mention and why is None:
+            if not mention and not answers:
+                who = (c.get("creator") or {}).get("name") or (c.get("creator") or {}).get("id")
                 self.log(f"{'dry ' if self.dry else ''}skipped comment {cid} by {who} on "
                          f"{rec.get('parent_type') or 'thread'} {thread}: no @mention or reply to the agent, no answer "
-                         f"awaited, not the agent's")
+                         f"awaited")
                 continue
             text = plain(c.get("content"))
             on = c.get("parent") or {}
@@ -1801,16 +1792,13 @@ class Tools:
             self.record({"kind": "mention" if mention else "thread-comment", "bucket": int(bucket), "parent": thread,
                          "parent_type": rec.get("parent_type"), "title": rec.get("title"), "comment": cid,
                          "question": "?" in text, "url": c.get("app_url") or on.get("app_url"), "text": text,
-                         "at": c.get("created_at"), **({"why": why} if why else {}), **elsewhere,
+                         "at": c.get("created_at"), **({} if mention else {"why": "awaiting"}), **elsewhere,
                          **self.author(c.get("creator"), bucket)})
             rec.setdefault("comments", []).append(cid)
             rec.setdefault("ack", []).append([cid, self.read_ack(mention or "?" in text)])
             self.log(f"new owner {'mention' if mention else 'comment'} on {rec.get('parent_type') or 'thread'} {thread}: {cid}")
-
-        def keep(rid, b):  # an emoji-only boost answers only the agent's comment that awaits an answer
-            return not emoji_only(b.get("content")) or boost_mark is not None and boost_mark.get("comment") == rid
         self.read_boosts(rec, "thread-comment", {"bucket": int(bucket), "parent": thread, "title": rec.get("title")},
-                         bucket=bucket, counted=boost_items(comments), keep=keep)
+                         bucket=bucket, counted=boost_items(comments), emoji=False)
         self.acknowledge(f"thread {thread}", rec, bucket)
         if not self.dry:
             rec["cursor"] = cursor
@@ -1829,16 +1817,6 @@ class Tools:
         self.log(f"thread {thread}: the answer awaited since {mark.get('at')} did not come by {mark.get('until')}; "
                  "the mark is cleared")
         return None
-
-    def yours(self, bucket, thread, ptype):
-        """True when recording `thread` (of type `ptype`) in `bucket` is the agent's: the acting user made it, or it is a
-        to-do or card assigned to the acting user. Refetched; a failed read raises."""
-        me = self.acting_id()
-        if me in (None, "retry"):
-            return False
-        r = (self.todo(thread, bucket, card=ptype == "Kanban::Card") if ptype in ("Todo", "Kanban::Card")
-             else self.recording(thread, bucket))
-        return me in {(r.get("creator") or {}).get("id")} | {(a or {}).get("id") for a in r.get("assignees") or []}
 
     def elsewhere(self, bucket, recording, rec=None):
         """{"project": {"id", "name"}} for a record of `recording` in `bucket` when that is another project of the account
@@ -1912,7 +1890,7 @@ class Tools:
 
     # --- commands: explicit posts, run by the agent ---
 
-    def reply(self, rid, text=None, again=False, boost=None, awaiting=None):
+    def reply(self, rid, text=None, again=False, boost=None, awaiting=False):
         """Answer the captain's comment or line `rid` where it was made, then take the acting user's 👀 off it.
 
         A card comment is answered with a comment on that card, a chat or Ping line with
@@ -1923,24 +1901,21 @@ class Tools:
         👀 stays. With `boost` (text of at most BOOST_MAX characters) the answer is that
         boost on `rid` itself instead of a comment or line, recorded and followed the same
         way; longer or empty text is refused (raised) before anything is read or posted.
-        With `awaiting` (a number of days, at least 1) on a followed thread's comment
-        (threads.json), the thread is marked as awaiting an answer for that long: the
-        next comment there from anyone listened to but the agent is relayed even without an
-        @mention, which clears the mark, and while it lasts an emoji-only boost on the
-        agent's answer is relayed too (see read_thread). Anywhere else every comment or line
+        With `awaiting` on a followed thread's comment (threads.json), the thread is marked
+        as awaiting an answer for AWAIT_DAYS days: the next comment there from anyone
+        listened to but the agent is relayed even without an @mention, which clears the
+        mark (see read_thread). Anywhere else every comment or line
         that is input already reaches the agent, so `awaiting` is logged and ignored there.
         """
         if boost is not None:
             boost = boost.strip()
             if not boost or len(boost) > BOOST_MAX:
                 raise ValueError(f"a boost holds 1 to {BOOST_MAX} characters, not {len(boost)}: {boost!r}")
-        if awaiting is not None and (isinstance(awaiting, bool) or not isinstance(awaiting, int) or awaiting < 1):
-            raise ValueError(f"an answer is awaited for 1 day or more, not {awaiting!r}")
         threads = self.load("threads.json", {})
-        if awaiting is not None and not any(rid in r.get("comments", []) for r in threads.values()):
+        if awaiting and not any(rid in r.get("comments", []) for r in threads.values()):
             self.log(f"reply {rid}: --awaiting ignored: it marks only a followed thread (threads.json), and every "
                      "comment or line that is input elsewhere already reaches the agent")
-            awaiting = None
+            awaiting = False
         ping = next((c for c, r in self.load("pings.json", {}).get("pings", {}).items() if rid in r.get("lines", [])), None)
         if ping is not None:
             return self.reply_ping(ping, rid, text, again, boost)
@@ -2052,9 +2027,9 @@ class Tools:
         self.remove_eyes(rid, None, answer)
         return True
 
-    def reply_thread(self, key, rid, text, again, boost=None, awaiting=None):
+    def reply_thread(self, key, rid, text, again, boost=None, awaiting=False):
         """Answer the owner's comment `rid` on thread `key` (threads.json) with a comment (Markdown) there, in its bucket;
-        with `awaiting` (days), mark the thread as awaiting an answer that long (threads.json "awaiting": the agent's
+        with `awaiting`, mark the thread as awaiting an answer for AWAIT_DAYS days (threads.json "awaiting": the agent's
         comment, when posted as one, and when the mark was set and ends)."""
         rec = self.load("threads.json", {})[key]
         if rid in rec.get("replied", []) and not again:
@@ -2064,7 +2039,7 @@ class Tools:
             return False
         where = f"{rec.get('parent_type') or 'thread'} {rec['thread']}"
         if self.dry:
-            mark = f", mark it awaiting an answer for {awaiting} day(s)" if awaiting else ""
+            mark = f", mark it awaiting an answer for {AWAIT_DAYS} days" if awaiting else ""
             self.log(f"dry reply {rid}: {self.reply_plan(rid, f'comment on {where}', boost)}{mark}, then remove {EYES}")
             return False
         posted = {}
@@ -2078,7 +2053,7 @@ class Tools:
         if awaiting:
             now = datetime.now(timezone.utc)
             state[key]["awaiting"] = {"comment": posted.get("id"), "at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                                      "until": (now + timedelta(days=awaiting)).strftime("%Y-%m-%dT%H:%M:%SZ")}
+                                      "until": (now + timedelta(days=AWAIT_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")}
             self.log(f"reply {rid}: {where} awaits an answer until {state[key]['awaiting']['until']}: the next comment "
                      "there is relayed")
         self.save_json("threads.json", state)

@@ -1173,7 +1173,7 @@ class Notifications(Behavior):
       - a check-in Reminder (checkin-answering on): the check-in reader;
       - an owner's @mention of the agent in a thread nothing tracks: a `chat-question`
         (in a chat) or `mention` record of its own; any other comment there only when the
-        thread awaits an answer (`reply --awaiting`) or is the agent's, else it is skipped
+        thread awaits an answer (`reply --awaiting`), else it is skipped
         (Tools.read_thread).
 
     Owner input in the project that none of these handles (a comment on a Document, a
@@ -1739,10 +1739,9 @@ def inbox_note(rec, account, project):
         rid = rec.get("comment")
         what = (f"Basecamp {'@mention of you' if kind == 'mention' else 'comment'} from {who} on "
                 f"{rec.get('parent_type') or 'a recording'}" + (f" {rec.get('title')!r}" if rec.get("title") else "") + elsewhere)
-        facts = ["addressed to you" if kind == "mention" else {
-            "awaiting": "the first comment there after your reply that awaited an answer (reply --awaiting); "
-                        "the thread no longer awaits one",
-            "yours": "on something of yours: you made it, or it is assigned to you"}.get(rec.get("why"), "on something you follow")]
+        facts = ["addressed to you" if kind == "mention" else
+                 "the first comment there after your reply that awaited an answer (reply --awaiting); "
+                 "the thread no longer awaits one" if rec.get("why") == "awaiting" else "on something you follow"]
         cmds, url = [f"sync.py reply --recording {rid} (answers there)"], rec.get("url")
     elif kind == "decision-step-done":
         rid = f"{rec.get('todo')}-{rec.get('step')}"

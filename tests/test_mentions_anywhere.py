@@ -21,7 +21,7 @@ MENTION = f'<bc-attachment sgid="sgid-{ACTING}" content-type="application/vnd.ba
 WHERE = {"id": OTHER, "name": "Bugs", "type": "Project"}
 
 
-def doc_comment(id, who=CAPTAIN, content="<p>tighten the intro</p>", boosts=0, thread=4, ptype="Document", title="Spec"):
+def doc_comment(id, who=CAPTAIN, content=f"<p>{MENTION} tighten the intro</p>", boosts=0, thread=4, ptype="Document", title="Spec"):
     """A comment in project OTHER, shaped like Basecamp's (which names the bucket on every recording)."""
     return {"id": id, "creator": {"id": who, "name": "Cap"}, "content": content, "created_at": "2099-01-01T00:00:01Z",
             "app_url": f"https://x/{thread}#c{id}", "boosts_count": boosts, "bucket": WHERE,
@@ -60,31 +60,26 @@ class Threads(Base):
         self.assertEqual(self.stub.projects("comments create"), [str(OTHER)])
         self.assertTrue(any(p.startswith(f"/buckets/{OTHER}/boosts/") for p in self.stub.paths("delete")))
 
-    def test_comments_on_a_card_assigned_to_the_agent_there_are_thread_comments(self):
-        self.stub.cards[600] = {"id": 600, "creator": {"id": CAPTAIN}, "assignees": [{"id": ACTING}]}
+    def test_mentions_on_a_card_the_agent_follows_there_are_relayed(self):
         self.stub.comments["600"] = [doc_comment(9, thread=600, ptype="Kanban::Card", title="Alert noise")]
         self.notify(note(20, thread=600, anchor=9, path="cards", bucket=OTHER, title="Re: Alert noise"))
         self.poll()
-        self.stub.comments["600"].append(doc_comment(11, content="<p>and this one?</p>", thread=600, ptype="Kanban::Card"))
+        self.stub.comments["600"].append(doc_comment(11, content=f"<p>{MENTION} and this one?</p>", thread=600, ptype="Kanban::Card"))
         self.stub.readings["unreads"][0].update(unread_at="2099-01-01T00:00:09Z",
                                                 readable_identifier=note(0, anchor=11)["readable_identifier"])
         self.poll()
         self.assertEqual([(r["kind"], r["parent"], r["comment"], r["project"]["id"]) for r in self.pending()],
-                         [("thread-comment", 600, 9, OTHER), ("thread-comment", 600, 11, OTHER)])
+                         [("mention", 600, 9, OTHER), ("mention", 600, 11, OTHER)])
         self.assertEqual(self.state("threads.json")[f"{OTHER}:600"]["project_name"], "Bugs")
-        self.assertIn(f"/buckets/{OTHER}/card_tables/cards/600.json", self.stub.paths())
-        self.assertEqual({r["why"] for r in self.pending()}, {"yours"})
 
-    def test_a_plain_comment_on_someone_elses_card_there_is_skipped(self):
-        self.stub.cards[600] = {"id": 600, "creator": {"id": CAPTAIN}, "assignees": []}
-        self.stub.comments["600"] = [doc_comment(9, thread=600, ptype="Kanban::Card", title="Alert noise")]
+    def test_a_plain_comment_on_a_card_there_is_skipped(self):
+        self.stub.comments["600"] = [doc_comment(9, content="<p>see this</p>", thread=600, ptype="Kanban::Card")]
         self.notify(note(20, thread=600, anchor=9, path="cards", bucket=OTHER, title="Re: Alert noise"))
         self.poll()
         self.assertEqual((self.pending(), self.stub.notes), ([], []))
         self.assertEqual(self.stub.marked, [["20"]])
 
     def test_an_owner_boost_on_the_agents_reply_there_is_relayed(self):
-        self.stub.recordings[4] = {"id": 4, "creator": {"id": ACTING}}
         self.stub.comments["4"] = [doc_comment(9)]
         self.notify(note(10, thread=4, anchor=9, path="documents", bucket=OTHER))
         self.poll()  # the thread is known from here; its boost counts are seeded
@@ -94,7 +89,7 @@ class Threads(Base):
                                         bucket=OTHER)]
         self.poll()
         self.assertEqual([(r["kind"], r.get("surface"), r.get("recording")) for r in self.pending()],
-                         [("thread-comment", None, None), ("boost", "thread-comment", 15)])
+                         [("mention", None, None), ("boost", "thread-comment", 15)])
 
     def test_a_boost_on_a_thread_nothing_followed_there_is_left_alone(self):
         self.stub.my_boosts = [my_boost(81, 31, "Comment", parent={"id": 4, "type": "Document"}, bucket=OTHER)]
@@ -143,7 +138,6 @@ class Access(Base):
     def test_named_people_count_everywhere_and_project_people_only_in_their_project(self):
         LOCAL, THERE = 77777777, 99999999
         self.cfg(project_people={str(PROJECT): [LOCAL], str(OTHER): [THERE]})
-        self.stub.recordings[4] = {"id": 4, "creator": {"id": ACTING}}
         self.stub.comments["4"] = [doc_comment(9, who=PARTNER), doc_comment(10, who=LOCAL), doc_comment(11, who=THERE)]
         self.notify(note(20, thread=4, anchor=9, path="documents", bucket=OTHER))
         self.poll()

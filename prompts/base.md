@@ -136,9 +136,8 @@ or the to-do commands for a tracked to-do). By `kind`:
   something nothing else tracks (a document, someone else's to-do, a card).
   `reply --recording <comment>` answers there.
 - `thread-comment`: the captain commented on something you follow that nothing else
-  tracks, e.g. a card whose task has left the backlog, or a document, and either it is
-  yours (`why` `yours`: you made it or were assigned it) or it is the first comment after
-  your `reply --awaiting` there (`why` `awaiting`). Other comments on followed threads are
+  tracks, e.g. a card whose task has left the backlog, or a document, and it is the
+  first comment after your `reply --awaiting` there (`why` `awaiting`). Other comments on followed threads are
   skipped. `reply` answers there; add `--awaiting` when your reply asks something that may
   be answered without an @mention.
 - `checkin`: a check-in question came due today.

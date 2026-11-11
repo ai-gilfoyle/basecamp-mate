@@ -18,7 +18,7 @@ to the owner while no firstmate session holds the home's lock and inbox notes wa
 with a `profile`: every run reads the agent login's Basecamp notifications and boosts and
 runs the reader for each thread that changed, so the captain's input arrives within about
 half a minute; it relays their @mentions and Replies to the login on anything it follows, and
-other comments there only on what is the login's own or after its `reply --awaiting`, marks
+other comments there only after its `reply --awaiting`, marks
 handled notifications read, and records an `unmonitored` record when the captain does
 something nothing monitors). The other readers run as an hourly (to-do requests: 5-minute)
 repair sweep. `"listen"` and `sync.py listen`, the retired event listener, are ignored;
@@ -266,16 +266,14 @@ that read.
 - `mention`, `thread-comment`: the captain @mentioned this home's login in, or commented
   on, something it follows that nothing else tracks (a card whose task left the backlog, a
   document, someone else's to-do). A mention (an @mention, or a Basecamp Reply to your
-  comment) is addressed to you. A thread comment arrives only when the thread is yours
-  (`why` `yours`: you made it, or it is a to-do or card assigned to you) or it is the first
+  comment) is addressed to you. A thread comment arrives only when it is the first
   comment after your `reply --awaiting` there (`why` `awaiting`: the answer to your
   question); every other comment on a followed thread is skipped, with a `skipped comment`
   line in `sync.log`. Handle it like a card `comment` (relay outside the main firstmate's
   home), and answer there with `sync.py reply --recording <comment id>`.
   When your reply on a followed thread asks something and the answer may come without an
-  @mention, add `--awaiting` (`--awaiting-days N` sets how long, default 7): the next
-  comment there from anyone listened to reaches you once, and until then an emoji-only boost
-  on your reply does too. Without it, a plain answer on someone else's thread is skipped. With `"mentions": {"scope":
+  @mention, add `--awaiting`: the next comment there from anyone listened to within 7 days
+  reaches you once. Without it, a plain answer on someone else's thread is skipped. With `"mentions": {"scope":
   "account"}` (`init --mentions-anywhere`, the main home only, like account-wide to-do
   requests), one from any project of the account arrives too, and it and a `chat-question`
   from another project's chat carry `project` (`id`, `name`); route it like an account-wide
@@ -292,8 +290,7 @@ that read.
   main firstmate's home), then answer with `sync.py reply --recording <comment id>`.
 - `boost`: the captain boosted something being watched (`surface`: chat, ping, card,
   card-comment, todo, todo-comment, checkin-answer, message, message-comment, thread-comment); a boost
-  can carry short text. On `thread-comment` an emoji-only boost (👍, ❤️) arrives only on your
-  reply that awaits an answer (`reply --awaiting`); the rest are skipped. It is an answer to what was boosted, like a comment there: on a
+  can carry short text. On `thread-comment` an emoji-only boost (👍, ❤️) is skipped. It is an answer to what was boosted, like a comment there: on a
   decision to-do or a comment under it, a decision or feedback as above; on a to-do request
   (`request: true`), more about that request; elsewhere a reply
   to that line, answer or post. Relay it like a comment outside the main firstmate's home.
