@@ -54,7 +54,7 @@ the same project (or Pings, account-wide to-do requests or account-wide mentions
 
 Usage: sync.py --home <home> --config <config.json> [--all] [--dry-run] [--include-prereleases] [--allow-duplicate]
        sync.py status      (the runs recorded on this computer; also bin/basecamp-mate status)
-       sync.py reply --home <home> --config <config.json> --recording <comment, chat line or Ping line id> (--body-file <file> | --boost <text>) [--again] [--dry-run]
+       sync.py reply --home <home> --config <config.json> --recording <comment, chat line or Ping line id> (--body-file <file> | --boost <text>) [--again] [--awaiting [--awaiting-days N]] [--dry-run]
        sync.py watch --home <home> --config <config.json> --chat <chat URL> [--after-line <line id>] [--until YYYY-MM-DD] [--dry-run]
        sync.py unwatch --home <home> --config <config.json> --chat <chat URL> [--dry-run]
        sync.py ask --home <home> --config <config.json> --body-file <file> [--dry-run]
@@ -392,10 +392,19 @@ def cli(argv=None, runner=subprocess.run):
         how.add_argument("--boost", help=f"answer with a boost of this text ({BOOST_MAX} characters or fewer) on the "
                                           "recording instead of a comment, e.g. a thanks, \"done\" or a plain yes")
         ap.add_argument("--again", action="store_true", help="post even though this question was already answered")
+        ap.add_argument("--awaiting", action="store_true",
+                        help="on a followed thread: the reply asks something, so relay the next comment there from "
+                             "anyone else even without an @mention (once), and an emoji-only boost on the reply")
+        ap.add_argument("--awaiting-days", type=int, metavar="N",
+                        help="with --awaiting: stop awaiting the answer after N days (default 7)")
         ap.add_argument("--dry-run", action="store_true")
         a = ap.parse_args(argv[1:])
+        if a.awaiting_days is not None and (not a.awaiting or a.awaiting_days < 1):
+            ap.error("--awaiting-days takes a number of days of 1 or more, with --awaiting")
+        days = (a.awaiting_days or 7) if a.awaiting else None
         return command(a, f"reply {a.recording}", lambda s: s.reply(
-            a.recording, None if a.boost is not None else read(a.body_file), again=a.again, boost=a.boost), runner)
+            a.recording, None if a.boost is not None else read(a.body_file), again=a.again, boost=a.boost,
+            awaiting=days), runner)
     if argv[:1] in (["watch"], ["unwatch"]):
         what = argv[0]
         ap = common(f"sync.py {what}", "Watch one chat in any project of the account: relay the listened-to people's lines "

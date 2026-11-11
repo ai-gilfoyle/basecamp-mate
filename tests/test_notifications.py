@@ -46,11 +46,12 @@ def my_boost(id, rid, rtype="Chat::Lines::RichText", parent=None, who=CAPTAIN, c
 
 
 class NotifStub(TodoStub):
-    """Adds single chat lines, comments, messages and recordings refetched by id, and failing calls on demand."""
+    """Adds single chat lines, comments, messages, cards and recordings refetched by id, and failing calls on demand."""
 
     def __init__(self):
         super().__init__()
         self.parents, self.recordings, self.messages = {}, {}, {}  # comment id -> parent; recording id -> JSON; message id -> JSON
+        self.cards = {}  # card id -> JSON (whose it is)
         self.fail = set()  # a substring of a call's arguments that makes it fail
         self.on_mark = None  # called on each `notifications read`
 
@@ -64,7 +65,7 @@ class NotifStub(TodoStub):
             if core[:2] == ["notifications", "read"] and self.on_mark:
                 self.on_mark()
             path = core[2] if core[:2] == ["api", "get"] else ""
-            m = re.fullmatch(r"/buckets/\d+/(chats/(\d+)/lines|comments|messages|recordings)/(\d+)\.json", path)
+            m = re.fullmatch(r"/buckets/\d+/(chats/(\d+)/lines|comments|messages|recordings|card_tables/cards)/(\d+)\.json", path)
             if m:
                 self.calls.append(core)
                 rid = int(m.group(3))
@@ -74,6 +75,8 @@ class NotifStub(TodoStub):
                     data = {"id": rid, "parent": self.parents.get(rid, {}), **self.recordings.get(rid, {})}
                 elif m.group(1) == "messages":
                     data = self.messages.get(rid, {})
+                elif m.group(1) == "card_tables/cards":
+                    data = self.cards.get(rid, {})
                 else:
                     data = self.recordings.get(rid, {})
                 return SimpleNamespace(stdout=json.dumps({"ok": True, "data": data}), stderr="", returncode=0)
@@ -234,7 +237,12 @@ class Reader(NotifBase):
 
 
 class Threads(NotifBase):
-    """Comments and @mentions on any other thread the agent follows are relayed by that thread's own reader."""
+    """Comments and @mentions on any other thread the agent follows are relayed by that thread's own reader. Document 4
+    is the agent's, so its plain comments are relayed (test_relay_filter covers the threads that are not)."""
+
+    def setUp(self):
+        super().setUp()
+        self.stub.recordings[4] = {"id": 4, "type": "Document", "creator": {"id": ACTING}}
 
     def doc_comment(self, id, who=CAPTAIN, content="<p>tighten the intro</p>", boosts=0):
         return {"id": id, "creator": {"id": who, "name": "Cap"}, "content": content, "created_at": f"t{id}",
@@ -291,6 +299,7 @@ class Threads(NotifBase):
         self.assertEqual(self.stub.marked, [["20"]])
 
     def test_a_comment_on_a_card_nothing_mirrors_is_a_thread_comment(self):
+        self.stub.cards[600] = {"id": 600, "creator": {"id": CAPTAIN}, "assignees": [{"id": ACTING}]}
         self.stub.comments["600"] = [comment(9, content="<p>see this</p>")]
         self.notify(note(20, thread=600, anchor=9, path="cards", title="Re: Hand-made card"))
         self.poll()
@@ -336,6 +345,7 @@ class Replays(NotifBase):
     def answered_and_completed(self):
         """The decision to-do: the owner's "merge", two @mentions, each relayed once and answered, then completed."""
         tid = self.create(key="ta-speech-bystander-prose")
+        self.stub.todo_records[str(tid)]["creator"] = {"id": ACTING}  # the agent made it
         self.stub.comments[str(tid)] = [comment(9, content="<p>merge</p>")]
         self.notify(note(10, thread=tid, anchor=9))
         self.poll()
@@ -389,6 +399,7 @@ class Replays(NotifBase):
         def doc(id, at):
             return {"id": id, "creator": {"id": CAPTAIN, "name": "Cap"}, "content": f"<p>note {id}</p>", "created_at": at,
                     "app_url": f"https://x/docs/4#c{id}", "parent": {"id": 4, "type": "Document", "title": "Roadmap"}}
+        self.stub.recordings[4] = {"id": 4, "creator": {"id": ACTING}}
         self.stub.comments["4"] = [doc(7, "2099-01-01T00:00:00Z"), doc(8, "2099-01-01T00:10:00Z")]
         self.notify(note(10, thread=4, path="documents", at="2099-01-01T00:10:00.100Z"))  # names the document, no comment
         self.poll()

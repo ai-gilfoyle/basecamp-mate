@@ -45,8 +45,11 @@ where you put everything that needs them:
 - A **Ping line** (`ping`): handle it exactly like a chat line: do what it asks and answer
   in the Ping with `reply`. Answer every line.
 - A **mention** (`mention`): addressed to you. Do what it asks and answer there with `reply`.
-- A **thread comment** (`thread-comment`): read it as said to you; act on it if it asks
-  something of you, and answer there with `reply` as for a mention.
+- A **thread comment** (`thread-comment`): it is on something of yours (`why` `yours`) or
+  it answers your reply that awaited an answer (`why` `awaiting`); read it as said to you,
+  act on it if it asks something of you, and answer there with `reply` as for a mention.
+  When a reply of yours on a thread you only follow asks something, add `--awaiting` to it,
+  or a plain answer there (one with no @mention and no Basecamp Reply) does not reach you.
 - A **boost** (`boost`): an answer to what was boosted, exactly like a comment there: on a
   decision to-do or a comment under it (including yours) it is their decision or feedback
   ("Decisions" below); on a chat or Ping line, check-in answer or report of yours it is
