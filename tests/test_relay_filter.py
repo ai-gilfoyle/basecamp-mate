@@ -212,10 +212,13 @@ class Boosts(Base):
         self.boosted(1500, 90, THUMBS)
         self.boosted(1500, 91, "<div>❤️\U0001F389</div>")
         self.boosted(1500, 92, "yes")
-        self.assertEqual(self.boosts(), [(1500, "yes")])
+        self.boosted(1500, 93, "1️⃣")
+        self.boosted(1500, 94, "?")
+        self.assertEqual(self.boosts(), [(1500, "yes"), (1500, "?")])
         self.assertIn("skipped boost 90 by Cap on thread-comment 1500: emoji only", self.log())
         self.assertIn("skipped boost 91", self.log())
-        self.assertEqual(self.state()["boosts"], [90, 91, 92])  # all handled, none replayed
+        self.assertIn("skipped boost 93", self.log())
+        self.assertEqual(self.state()["boosts"], [90, 91, 92, 93, 94])  # all handled, none replayed
 
     def test_an_emoji_only_boost_on_the_comment_that_awaits_an_answer_is_skipped_too(self):
         self.mention_thread()
@@ -244,10 +247,11 @@ class Boosts(Base):
 
 
 class EmojiOnly(unittest.TestCase):
-    def test_no_letter_or_digit(self):
-        for yes in (THUMBS, "\U0001F44D\U0001F3FD", "❤️", "<div>\U0001F389 \U0001F389</div>", "!!"):
+    def test_emoji_and_whitespace_only(self):
+        for yes in (THUMBS, "\U0001F44D\U0001F3FD", "❤️", "<div>\U0001F389 \U0001F389</div>", "1️⃣", "#\u20e3",
+                    "\U0001F1FA\U0001F1F8", "\U0001F468\u200d\U0001F4BB", "\U0001F3F4\U000E0067\U000E0062\U000E0073\U000E0063\U000E0074\U000E007F"):
             self.assertTrue(tools.emoji_only(yes), yes)
-        for no in ("yes", "+1", "a", "Done ✅", "", None, "<div></div>"):
+        for no in ("yes", "+1", "a", "1", "Done ✅", "?", "!!", "\U0001F44D!", "", None, "<div></div>", "<div> </div>"):
             self.assertFalse(tools.emoji_only(no), no)
 
 

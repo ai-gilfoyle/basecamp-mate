@@ -34,7 +34,7 @@ post-message) posts nothing when no profile is set, or when the profile signs in
 the owner, and `--dry-run` only logs. All state lives in the directory holding the
 config.
 """
-import base64, contextlib, csv, fcntl, hashlib, html, json, os, re, subprocess, time, tomllib
+import base64, contextlib, csv, fcntl, hashlib, html, json, os, re, subprocess, time, tomllib, unicodedata
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -503,7 +503,7 @@ class Tools:
         history. Each new boost is recorded only as `confirmed` allows: one to retry leaves
         its recording to be read again next run. `bucket` is where the recordings are
         (default the project). With `emoji` False, a boost whose confirmed content is emoji
-        only (no letter or digit) is seen, logged as skipped and never recorded. A dry run
+        only (see emoji_only) is seen, logged as skipped and never recorded. A dry run
         records nothing.
         """
         counts, seen = rec.get("boost_counts"), rec.get("boost_seen")
@@ -1729,7 +1729,7 @@ class Tools:
         contains "?", a 👍 otherwise. `reply` answers either with a comment on the thread.
         `ptype` and `title` name the thread when the comments do not. The owner's boosts on
         its comments (the agent's replies included) are `boost` records with surface
-        `thread-comment`, except a boost of emoji only (no letter or digit), which is
+        `thread-comment`, except a boost of emoji only (see emoji_only), which is
         skipped. A thread in another project ("mentions": {"scope": "account"}) is
         read the same way, the people heard as in "project_people" for that project, and its
         records carry that `project`. A dry run reads and logs only.
@@ -2970,9 +2970,13 @@ def answered(comment, mark):
 
 
 def emoji_only(content):
-    """True when boost `content` (HTML) holds no letter or digit: an emoji, or several, with no words."""
-    text = html.unescape(re.sub(r"<[^>]+>", "", content or "")).strip()
-    return bool(text) and not any(ch.isalnum() for ch in text)
+    """True when boost `content` (HTML) is emoji and whitespace only: each character a pictographic symbol (Unicode
+    category So, flags included), a skin tone, a joiner, a variation selector or a flag tag, or a keycap such as 1️⃣;
+    letters, digits and punctuation such as ? or !! are not emoji."""
+    text = re.sub(r"\s+", "", html.unescape(re.sub(r"<[^>]+>", "", content or "")))
+    rest = re.sub("[0-9#*]\ufe0f?\u20e3", "", text)
+    return bool(text) and all(unicodedata.category(ch) == "So" or ch in "\u200d\ufe0e\ufe0f"
+                              or "\U0001F3FB" <= ch <= "\U0001F3FF" or "\U000E0020" <= ch <= "\U000E007F" for ch in rest)
 
 
 def is_emoji(content, emoji):
