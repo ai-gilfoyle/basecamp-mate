@@ -413,8 +413,9 @@ since everything there already reaches the agent.
 Boosts on a followed thread follow the same rule: an owner's boost of emoji only (emoji and
 spaces, such as 👍, ❤️, 🎉🎉 or 1️⃣) on a comment there is skipped (one `skipped boost` line in
 `sync.log`), judged on the boost's text as the agent's received-boosts feed gives it. A
-boost does not clear the mark. A boost with words or punctuation (`yes`, `a`, `?`,
-`!!`) is relayed as before, and boosts on every other surface are unchanged.
+boost does not clear the mark. A boost with words, punctuation or a symbol that is not an
+emoji (`yes`, `a`, `?`,
+`!!`, `✓`) is relayed as before, and boosts on every other surface are unchanged.
 
 **Scope.** Items in other projects are another home's: they are never read, acted on or
 marked read here, except a Ping (with `pings` on), a to-do request with `"scope":

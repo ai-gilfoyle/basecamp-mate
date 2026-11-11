@@ -34,7 +34,7 @@ post-message) posts nothing when no profile is set, or when the profile signs in
 the owner, and `--dry-run` only logs. All state lives in the directory holding the
 config.
 """
-import base64, contextlib, csv, fcntl, hashlib, html, json, os, re, subprocess, time, tomllib, unicodedata
+import base64, contextlib, csv, fcntl, hashlib, html, json, os, re, subprocess, time, tomllib
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -2969,14 +2969,26 @@ def answered(comment, mark):
     return not history(comment.get("created_at"), mark.get("at"), slack=0)
 
 
+# Unicode's Extended_Pictographic code points (emoji-data.txt), as ranges "first[..last]" in hex.
+PICTOGRAPHIC = [tuple(int(x, 16) for x in (r.split("..") * 2)[:2]) for r in """
+    00A9 00AE 203C 2049 2122 2139 2194..2199 21A9..21AA 231A..231B 2328 2388 23CF 23E9..23F3 23F8..23FA 24C2
+    25AA..25AB 25B6 25C0 25FB..25FE 2600..2605 2607..2612 2614..2685 2690..2705 2708..2712 2714 2716 271D 2721 2728
+    2733..2734 2744 2747 274C 274E 2753..2755 2757 2763..2767 2795..2797 27A1 27B0 27BF 2934..2935 2B05..2B07
+    2B1B..2B1C 2B50 2B55 3030 303D 3297 3299 1F000..1F0FF 1F10D..1F10F 1F12F 1F16C..1F171 1F17E..1F17F 1F18E
+    1F191..1F19A 1F1AD..1F1E5 1F201..1F20F 1F21A 1F22F 1F232..1F23A 1F23C..1F23F 1F249..1F3FA 1F400..1F53D
+    1F546..1F64F 1F680..1F6FF 1F774..1F77F 1F7D5..1F7FF 1F80C..1F80F 1F848..1F84F 1F85A..1F85F 1F888..1F88F
+    1F8AE..1F8FF 1F90C..1F93A 1F93C..1F945 1F947..1FAFF 1FC00..1FFFD""".split()]
+# What joins or modifies emoji: variation selectors, the zero-width joiner, skin tones, regional indicators, tags.
+EMOJI_PARTS = [(0xFE0E, 0xFE0F), (0x200D, 0x200D), (0x1F3FB, 0x1F3FF), (0x1F1E6, 0x1F1FF), (0xE0020, 0xE007F)]
+
+
 def emoji_only(content):
-    """True when boost `content` (HTML) is emoji and whitespace only: each character a pictographic symbol (Unicode
-    category So, flags included), a skin tone, a joiner, a variation selector or a flag tag, or a keycap such as 1️⃣;
-    letters, digits and punctuation such as ? or !! are not emoji."""
+    """True when boost `content` (HTML) is emoji and whitespace only: each character Extended_Pictographic or a part
+    of an emoji (EMOJI_PARTS), or within a keycap such as 1️⃣; letters, digits, ✓ and punctuation such as ? or !! are
+    not emoji."""
     text = re.sub(r"\s+", "", html.unescape(re.sub(r"<[^>]+>", "", content or "")))
     rest = re.sub("[0-9#*]\ufe0f?\u20e3", "", text)
-    return bool(text) and all(unicodedata.category(ch) == "So" or ch in "\u200d\ufe0e\ufe0f"
-                              or "\U0001F3FB" <= ch <= "\U0001F3FF" or "\U000E0020" <= ch <= "\U000E007F" for ch in rest)
+    return bool(text) and all(any(a <= ord(ch) <= b for a, b in PICTOGRAPHIC + EMOJI_PARTS) for ch in rest)
 
 
 def is_emoji(content, emoji):
