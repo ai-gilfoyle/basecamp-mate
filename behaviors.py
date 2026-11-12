@@ -1498,13 +1498,14 @@ class Notifications(Behavior):
             want["chats"].setdefault(str(parent.get("id")), set())
             return True, [f"chat {parent.get('id')}"], None
         if rtype == "Chat::Lines" and bucket != t.project:
-            circles = {str(c["bucket"]) for c in t.ping_conversations(data)} | {
+            convs = {str(c["chat"]): c for c in t.ping_conversations(data)}
+            circles = {str(c["bucket"]) for c in convs.values()} | {
                 str(p.get("bucket")) for p in t.load("pings.json", {}).get("pings", {}).values()}
             if not b["pings"].on or bucket not in circles:
                 return False, [], None  # a line in another project's chat is another home's
             chat = str(parent.get("id"))
-            want["pings"][chat] = {"bucket": bucket, "chat": chat, "title": (rec.get("bucket") or {}).get("name"),
-                                   "url": rec.get("app_url")}
+            want["pings"].setdefault(chat, convs.get(chat) or {"bucket": bucket, "chat": chat, "url": rec.get("app_url"),
+                                                               "title": (rec.get("bucket") or {}).get("name")})
             return True, [f"ping {chat}"], None
         if keys:
             open_keys = {k for k in keys if not todos[k].get("completed") and not todos[k].get("closed")}

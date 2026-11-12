@@ -279,6 +279,27 @@ class GroupPings(PingBase):
         self.assertEqual([r["line"] for r in self.pending()], [2])
         self.assertFalse(self.state()["pings"][str(CHAT)]["group"])
 
+    def test_a_boost_read_keeps_the_group_a_ping_has_become(self):
+        """Regression: a Ping read for a boost was given a conversation without "group", so a direct Ping that had become
+        a group kept relaying every line."""
+        self.stub.readings["unreads"] = [reading(people=(CAPTAIN,))]
+        mine = dict(ping_line(2, who=ACTING, content="Done."), boosts_count=0)
+        self.say(mine)
+        self.poll()
+        self.assertFalse(self.state()["pings"][str(CHAT)]["group"])
+        self.stub.readings["unreads"] = [reading(people=(CAPTAIN, self.OPERATOR, 8), updated="2099-01-02T00:00:00Z")]
+        self.say(ping_line(3, who=self.OPERATOR, content="<p>lunch?</p>"), ping_line(4, content="<p>sure</p>"))
+        mine["boosts_count"] = 1
+        self.stub.boosts["2"] = [boost(42, content="🎉")]
+        self.stub.my_boosts = [{"id": 42, "content": "🎉", "booster": {"id": CAPTAIN}, "created_at": "tb",
+                                "recording": {"id": 2, "type": "Chat::Lines::RichText", "app_url": "https://x/c@2",
+                                              "bucket": {"id": CIRCLE, "name": "Owner + Agent", "type": "Circle"},
+                                              "parent": {"id": CHAT, "type": "Chat::Transcript"}}}]
+        self.sync().behaviors["notifications"].run()
+        self.assertTrue(self.state()["pings"][str(CHAT)]["group"])
+        self.assertEqual([r["kind"] for r in self.pending()], ["ping", "boost"])  # line 3 follows the agent's; 4 does not
+        self.assertIn("skipped line 4", self.log())
+
 
 class PingAttachments(PingBase):
     def upload(self, id, who=CAPTAIN):

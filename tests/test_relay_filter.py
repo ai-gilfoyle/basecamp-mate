@@ -344,6 +344,36 @@ class Boosts(Base):
         self.assertEqual([(r["kind"], r.get("why")) for r in self.pending()[1:]], [("boost", "awaiting")])
         self.assertNotIn("awaiting", self.threads()[f"{PROJECT}:4"])
 
+    def test_a_comment_waits_while_the_boosts_on_the_awaiting_comment_cannot_be_read(self):
+        """Regression: with the boosts on the question unread, a later comment took the mark, and the 👍 before it was
+        then skipped as emoji only."""
+        mine = self.ask_on_comment()
+        self.stub.comments["4"][-1]["boosts_count"] = 1
+        self.stub.boosts[str(mine)] = [boost(90, content=THUMBS)]
+        self.stub.my_boosts.append(dict(my_boost(90, mine, "Comment", parent={"id": 4, "type": "Document"}, content=THUMBS),
+                                        created_at="2000-01-01T00:00:00Z"))
+        self.stub.fail = {f"/recordings/{mine}/boosts.json"}
+        self.comment_later(2001, 1, content="<p>unrelated</p>", at=tools.now_iso())
+        self.assertEqual([r["kind"] for r in self.pending()], ["mention"])
+        self.assertIn("awaiting", self.threads()[f"{PROJECT}:4"])
+        self.assertLess(self.threads()[f"{PROJECT}:4"]["cursor"], 2001)
+        self.stub.fail = set()
+        self.comment_later(2002, 2, content="<p>more</p>", at=tools.now_iso())
+        self.assertEqual([(r["kind"], r.get("why")) for r in self.pending()[1:]], [("boost", "awaiting")])
+        self.assertIn("skipped comment 2001", self.log())
+        self.assertEqual(self.threads()[f"{PROJECT}:4"]["cursor"], 2002)
+
+    def test_a_retried_boost_on_the_awaiting_comment_keeps_later_ones_from_taking_the_mark(self):
+        mine = self.ask_on_comment()
+        self.stub.comments["4"][-1]["boosts_count"] = 2
+        self.stub.boosts[str(mine)] = [dict(boost(90, content="later"), created_at=tools.now_iso()),
+                                       boost(91, content="yes")]
+        self.stub.my_boosts.append(dict(my_boost(91, mine, "Comment", parent={"id": 4, "type": "Document"}, content="yes"),
+                                        created_at=tools.now_iso()))
+        self.comment_later(2001, 1, content="<p>fyi</p>", at=tools.now_iso())
+        self.assertEqual([r["kind"] for r in self.pending()], ["mention"])
+        self.assertIn("awaiting", self.threads()[f"{PROJECT}:4"])
+
     def test_the_skip_is_judged_on_the_text_the_received_boosts_confirm(self):
         """Regression: the skip was decided on the recording's boost text before the received boosts replaced it."""
         self.answered()

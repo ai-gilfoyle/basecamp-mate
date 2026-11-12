@@ -508,7 +508,8 @@ class Tools:
         someone else's recording is skipped the same way unless `others` allows it (see
         confirmed). `awaited` is a followed thread's awaiting mark (rec["awaiting"]): any
         boost made by its `until` on the agent's comment that holds it (its "comment") is
-        that answer, whatever its text, and clears the mark. A dry run records nothing.
+        that answer, whatever its text, and clears the mark; one to retry there leaves the
+        later boosts on that comment for the next run too. A dry run records nothing.
         Returns the ids of the recordings to read again next run (a failed read, or a
         boost `confirmed` retries).
         """
@@ -542,6 +543,8 @@ class Tools:
                     b = self.confirmed(b, rid, creator, bucket, others)
                     if b == "retry":
                         retry = True
+                        if awaited is not None and rid == awaited.get("comment"):
+                            break
                         continue
                 seen.append(bid)
                 if count is None and seed_seen or b is None:
@@ -1776,7 +1779,9 @@ class Tools:
         thread awaits an answer (the agent's `reply --awaiting` there, unexpired; the first
         such comment after that reply is relayed and clears the mark, "why": "awaiting", unless
         a boost on the agent's comment holding the mark, made by that comment's time, answered
-        it first: the boosts are read before the comments for that), or the thread is the
+        it first: the boosts are read before the comments for that, and while they cannot all
+        be read, the first comment that would answer and every later one wait for the next
+        run), or the thread is the
         agent's own ("why": "yours"); else it is skipped, with one "skipped" line in sync.log
         and no record and no boost. Who made the thread is read before any record, and a
         failed read leaves the whole thread to the next run.
@@ -1834,6 +1839,11 @@ class Tools:
         unread = self.read_boosts(rec, "thread-comment", {"bucket": int(bucket), "parent": thread, "title": rec.get("title")},
                                   bucket=bucket, counted=boost_items(comments), emoji=False, awaited=awaited)
         mark, held, after_of = rec.get("awaiting") or None, Held(self), {}
+        if mark is not None and first is not None and mark.get("comment") in unread:
+            self.log(f"thread {thread}: the boosts on {mark['comment']}, which awaits an answer, could not all be read; "
+                     f"comment {first.get('id')} and later wait for the next run")
+            fresh = [(c, m) for c, m in fresh if c.get("id", 0) < first.get("id", 0)]
+            cursor = min(cursor, max(rec["cursor"], first.get("id", 0) - 1))
         ordered = sorted(comments, key=lambda c: c.get("id", 0))
         for a, b in zip(ordered, ordered[1:]):
             after_of[b.get("id")] = a
