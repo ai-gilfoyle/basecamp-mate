@@ -1814,7 +1814,7 @@ class Tools:
         for c in sorted(comments, key=lambda c: c.get("id", 0)):
             cid = c.get("id", 0)
             if cid <= rec["cursor"]:
-                if not new and cid > floor and cid in mentions and cid not in known | set(rec.get("comments", [])):
+                if not new and cid > floor and cid in mentions and cid not in known | set(rec.get("comments", []) + rec.get("folded", [])):
                     fresh.append((c, True))
                 continue
             cursor = cid
@@ -1850,6 +1850,7 @@ class Tools:
         for c, mention in fresh:
             cid = c.get("id", 0)
             if held.fold(c, after_of.get(cid), f"thread {thread}"):
+                rec.setdefault("folded", []).append(cid)  # delivered inside the held note: a late mention of it is no news
                 continue
             if not self.hears(c.get("creator"), bucket=bucket):
                 if mention:

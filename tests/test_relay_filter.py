@@ -409,6 +409,20 @@ class Attachments(Base):
         _, body = behaviors.inbox_note(rec, "1", str(PROJECT))
         self.assertIn("Attachments: shot.png (https://x/shot.png)", body)
 
+    def test_a_late_mention_of_a_folded_attachment_comment_is_not_relayed_again(self):
+        """Regression (Greptile on PR 54): a folded comment was not recorded as delivered, so its Mention notification
+        arriving the next run recorded it again, attachment and all."""
+        self.stub.comments["4"] = [doc(9, content=f'<p><bc-attachment sgid="sgid-{ACTING}" '
+                                               'content-type="application/vnd.basecamp.mention"></bc-attachment> see this</p>'),
+                                   doc(10, content=self.IMG)]
+        self.notify(note(10, thread=4, anchor=9, path="documents"))
+        self.poll()
+        self.assertEqual(self.threads()[f"{PROJECT}:4"]["folded"], [10])
+        self.notify(note(10, thread=4, anchor=9, path="documents"),
+                    note(11, "Mention", thread=4, anchor=10, path="documents", at="2099-01-01T00:00:09Z"))
+        self.poll()
+        self.assertEqual([(r["comment"], len(r.get("attachments", []))) for r in self.pending()], [(9, 1)])
+
     def test_an_attachment_comment_by_someone_else_or_after_a_skipped_one_is_judged_alone(self):
         self.stub.comments["4"] = [doc(9, content=f'<p><bc-attachment sgid="sgid-{ACTING}" '
                                                'content-type="application/vnd.basecamp.mention"></bc-attachment> see</p>'),
