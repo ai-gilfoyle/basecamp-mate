@@ -401,7 +401,7 @@ line in `sync.log` (no answer awaited, or posted before the reply that awaits on
 the mark ended), no record and no 👀 or 👍. The thread's cursor still moves past it, so it is
 never read again, unless a mention notification later names it (a Reply that arrived
 while the thread was being read): then it is recorded as a `mention`, unless it already
-was. The rule is deterministic: the text of a comment (a `?`, a name) never decides it, so
+was or was folded into a note (below). The rule is deterministic: the text of a comment (a `?`, a name) never decides it, so
 an ask that only names the agent, with no @mention or Reply, is skipped.
 A comment of attachments only (an image, a file) right after a relayed comment by the same
 person, in the same read, is folded into that comment's record (`attachments`: `filename`
@@ -1291,7 +1291,7 @@ claim, in `~/.local/state/basecamp-mate/runs/`; see "One home per project and lo
 | `messages.json` | the script | per agent message: comment cursor, owner comments recorded, acknowledgement boosts queued and done, comments replied to; boost counts and boosts seen on the messages and their comments |
 | `notifications.json` | the script | per notification id, its cursor (`unread_at` when last handled, empty while its first handling keeps failing); when it last read `/my/readings.json`; the boost ids seen in `/my/boosts.json`; ids whose mark-read failed, to retry |
 | `timer.json` | the script | when each behavior's timer step last ran (`ran`), for its cadence; while refused as a duplicate run, the homes it overlaps and when that was last logged (`duplicate`) |
-| `threads.json` | the script | per followed thread (`<bucket>:<recording>`): its type and title, comment cursor, owner comments recorded, acknowledgement boosts queued and done, boost counts and boosts seen, comments replied to, and, after `reply --awaiting`, the answer awaited (`awaiting`: the agent's comment, `at`, `until`) |
+| `threads.json` | the script | per followed thread (`<bucket>:<recording>`): its type and title, comment cursor, owner comments recorded, acknowledgement boosts queued and done, boost counts and boosts seen, comments replied to, attachment-only comments folded into a relayed note (`folded`), and, after `reply --awaiting`, the answer awaited (`awaiting`: the agent's comment, `at`, `until`) |
 | `pings.json` | the script | `since` (the Ping reader's first run) and, per Ping chat id, its bucket, title, URL, line cursor, owner lines recorded, acknowledgement boosts queued and done, boost counts and boosts seen, lines replied to |
 | `unmonitored.json` | the script | unmonitored key -> the first notification (or boost) and recording recorded, when, how many were seen, and the owner's decision once handled |
 | `backup.json` | the script | per backed-up file: its upload id in the backup folder, the SHA-256 of the content last uploaded, and when |
