@@ -417,7 +417,8 @@ the second reply, still counts. A comment or boost counts only when posted by `u
 whenever it is read, and the earliest answer wins: a boost on the agent's comment made before
 the first answering comment is the answer, and that comment is then judged like any other.
 While the boosts on the agent's comment cannot all be read, that comment and every later one
-wait for the next run. A
+wait for the next run, and the notification that led to the read counts as a failed read, so
+it is read again then. A
 mark whose `until` passed is dropped after the read, with a log line, unless a read of the
 boosts on its comment failed (it is read again next run). A comment from someone not listened to,
 or from the agent itself, leaves the mark as it is. `--awaiting` on any other reply (a card

@@ -374,6 +374,23 @@ class Boosts(Base):
         self.assertEqual([r["kind"] for r in self.pending()], ["mention"])
         self.assertIn("awaiting", self.threads()[f"{PROJECT}:4"])
 
+    def test_a_comment_deferred_for_an_unconfirmed_boost_is_read_again_and_delivered_once_the_boost_is_gone(self):
+        """Regression: the deferral counted as a successful read, so the notification was handled, and with the boost
+        removed no later read delivered the comment."""
+        mine = self.ask_on_comment()
+        self.stub.comments["4"][-1]["boosts_count"] = 1
+        self.stub.boosts[str(mine)] = [dict(boost(90, content=THUMBS), created_at=tools.now_iso())]
+        self.comment_later(2001, 1, content="<p>tonight works</p>", at=tools.now_iso())
+        self.assertEqual([r["kind"] for r in self.pending()], ["mention"])
+        self.assertIn("notifications: retrying next run", self.log())
+        self.stub.comments["4"][-2]["boosts_count"] = 0
+        self.stub.boosts[str(mine)] = []
+        self.poll()
+        self.assertEqual([(r["kind"], r.get("comment"), r.get("why")) for r in self.pending()[1:]],
+                         [("thread-comment", 2001, "awaiting")])
+        self.assertNotIn("awaiting", self.threads()[f"{PROJECT}:4"])
+        self.assertEqual(self.threads()[f"{PROJECT}:4"]["cursor"], 2001)
+
     def test_the_skip_is_judged_on_the_text_the_received_boosts_confirm(self):
         """Regression: the skip was decided on the recording's boost text before the received boosts replaced it."""
         self.answered()

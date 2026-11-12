@@ -1844,6 +1844,7 @@ class Tools:
                      f"comment {first.get('id')} and later wait for the next run")
             fresh = [(c, m) for c, m in fresh if c.get("id", 0) < first.get("id", 0)]
             cursor = min(cursor, max(rec["cursor"], first.get("id", 0) - 1))
+            self.errors += 1
         ordered = sorted(comments, key=lambda c: c.get("id", 0))
         for a, b in zip(ordered, ordered[1:]):
             after_of[b.get("id")] = a
