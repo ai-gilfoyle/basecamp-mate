@@ -145,7 +145,8 @@ or the to-do commands for a tracked to-do). By `kind`:
   be answered without an @mention.
 - `checkin`: a check-in question came due today.
 - `message-comment`: the captain commented on a report you posted.
-- `boost`: the captain boosted something of yours (or anything on a decision to-do); a boost can carry short text
+- `boost`: the captain boosted something of yours (or anything on a decision to-do, or a worded boost on a to-do
+  request); a boost can carry short text
   (e.g. "a", "yes", "later"). `surface` says where, `recording` is what was boosted and
   `text` is the boost.
 - `unmonitored`: the captain did something in the project that nothing you run handles:

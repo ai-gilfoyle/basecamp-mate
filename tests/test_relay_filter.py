@@ -246,6 +246,14 @@ class Boosts(Base):
                                             content=content if listed is None else listed))
         self.poll()
 
+    def ask_on_comment(self):
+        """The agent answers the captain's Reply 9 with a question, awaiting the answer; returns its comment's id."""
+        self.mention_thread()
+        self.assertTrue(self.sync().reply(9, "Ship it tonight?", awaiting=True))
+        mine = self.stub.comments["4"][-1]["id"]
+        self.stub.comments["4"][-1].update(doc(mine, who=ACTING, content="<p>Ship it tonight?</p>"))
+        return mine
+
     def answered(self):
         """Document 4 with the agent's plain answer 1500 to the captain's Reply 9 (no answer awaited)."""
         self.mention_thread()
@@ -291,6 +299,50 @@ class Boosts(Base):
         self.assertIn("skipped comment 2001", self.log())
         self.boosted(mine, 91, THUMBS)  # a later emoji boost there is skipped again
         self.assertIn("skipped boost 91", self.log())
+
+    def test_a_boost_answer_before_an_unrelated_comment_read_with_it_wins(self):
+        """Regression: the comment posted after the 👍 took the mark first, and the 👍 was then skipped as emoji only."""
+        mine = self.ask_on_comment()
+        self.stub.comments["4"].append(doc(2001, content="<p>unrelated</p>", at=tools.now_iso()))
+        self.stub.my_boosts.append(dict(my_boost(90, mine, "Comment", parent={"id": 4, "type": "Document"}, content=THUMBS),
+                                        created_at="2000-01-01T00:00:00Z"))
+        self.stub.comments["4"][-2]["boosts_count"] = 1
+        self.stub.boosts[str(mine)] = [boost(90, content=THUMBS)]
+        self.notify(note(10, thread=4, anchor=2001, path="documents", at="2099-01-01T01:00:01Z"))
+        self.poll()
+        self.assertEqual([(r["kind"], r.get("why")) for r in self.pending()[1:]], [("boost", "awaiting")])
+        self.assertIn("skipped comment 2001", self.log())
+        self.assertNotIn("awaiting", self.threads()[f"{PROJECT}:4"])
+
+    def test_a_comment_before_the_boost_is_the_answer_and_the_boost_is_judged_as_any_other(self):
+        mine = self.ask_on_comment()
+        self.stub.comments["4"].append(doc(2001, content="<p>yes</p>", at="2000-01-01T00:00:00Z"))
+        self.stub.my_boosts.append(dict(my_boost(90, mine, "Comment", parent={"id": 4, "type": "Document"}, content=THUMBS),
+                                        created_at=tools.now_iso()))
+        self.stub.comments["4"][-2]["boosts_count"] = 1
+        self.stub.boosts[str(mine)] = [boost(90, content=THUMBS)]
+        self.notify(note(10, thread=4, anchor=2001, path="documents", at="2099-01-01T01:00:01Z"))
+        self.poll()
+        self.assertEqual([(r["kind"], r.get("why")) for r in self.pending()[1:]], [("thread-comment", "awaiting")])
+        self.assertIn("skipped boost 90", self.log())
+
+    def test_an_expired_mark_stays_while_a_boost_read_on_its_comment_fails(self):
+        mine = self.ask_on_comment()
+        state = self.threads()
+        state[f"{PROJECT}:4"]["awaiting"]["until"] = "2026-01-01T00:00:00Z"
+        with open(os.path.join(self.cfgdir, "threads.json"), "w") as f:
+            json.dump(state, f)
+        self.stub.comments["4"][-1]["boosts_count"] = 1
+        self.stub.boosts[str(mine)] = [boost(90, content=THUMBS)]
+        self.stub.my_boosts.append(dict(my_boost(90, mine, "Comment", parent={"id": 4, "type": "Document"}, content=THUMBS),
+                                        created_at="2025-12-31T23:59:00Z"))
+        self.stub.fail = {f"/recordings/{mine}/boosts.json"}
+        self.comment_later(2001, 1, content="<p>later</p>")
+        self.assertIn("awaiting", self.threads()[f"{PROJECT}:4"])
+        self.stub.fail = set()
+        self.comment_later(2002, 2, content="<p>more</p>")
+        self.assertEqual([(r["kind"], r.get("why")) for r in self.pending()[1:]], [("boost", "awaiting")])
+        self.assertNotIn("awaiting", self.threads()[f"{PROJECT}:4"])
 
     def test_the_skip_is_judged_on_the_text_the_received_boosts_confirm(self):
         """Regression: the skip was decided on the recording's boost text before the received boosts replaced it."""
@@ -365,6 +417,20 @@ class OwnThreads(Base):
         self.poll()
         self.assertEqual([r["comment"] for r in self.pending()], [9, 10])
         self.assertEqual(self.stub.gets().count(f"/buckets/{PROJECT}/recordings/4.json"), 1)
+
+    def test_a_failed_read_of_whose_thread_it_is_records_nothing_so_a_retry_duplicates_nothing(self):
+        """Regression: two mentions were recorded (the first flushed by the second) before a plain comment's lookup failed
+        and the read returned unsaved, so the retry recorded the first mention again."""
+        self.stub.recordings[4] = {"id": 4, "creator": {"id": CAPTAIN}}
+        at = f'<p><bc-attachment sgid="sgid-{ACTING}"></bc-attachment> look</p>'
+        self.stub.comments["4"] = [doc(9, content=at), doc(10, content=at), doc(11)]
+        self.stub.fail = {"/recordings/4.json"}
+        self.notify(note(10, thread=4, anchor=9, path="documents"))
+        self.poll()
+        self.assertEqual(self.pending(), [])
+        self.stub.fail = set()
+        self.poll()
+        self.assertEqual([r["comment"] for r in self.pending()], [9, 10])
 
 
 class OwnRecordingsOnly(Base):

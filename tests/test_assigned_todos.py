@@ -120,12 +120,19 @@ class Sweep(AssignBase):
         self.stub.boosts["42"] = [boost(7)]
         self.poll()
         kinds = [(r["kind"], r.get("comment") or r.get("boost")) for r in self.pending()]
-        # The comment already on it when it was assigned is part of the request too. A boost on the owner's own to-do is
-        # not aimed at the agent (only a decision to-do's are decision feedback): skipped.
-        self.assertEqual(kinds, [("todo-request", None), ("todo-comment", 5), ("todo-comment", 6)])
-        self.assertIn("skipped boost 7", open(os.path.join(self.cfgdir, "sync.log")).read())
+        # The comment already on it when it was assigned is part of the request too, and so is a worded boost on it.
+        self.assertEqual(kinds, [("todo-request", None), ("todo-comment", 5), ("todo-comment", 6), ("boost", 7)])
         self.assertTrue(all(r.get("request") and r["title"] == "Rotate the API keys" for r in self.pending()[1:]))
+        self.assertEqual(self.pending()[-1]["surface"], "todo")
         self.assertTrue(self.sync().reply(6, "Prod is done."))
+
+    def test_an_emoji_only_boost_on_the_owners_request_is_skipped(self):
+        self.add(todo(42))
+        self.poll()
+        self.stub.boosts["42"] = [boost(7, content="later"), boost(8, content="\U0001F44D")]
+        self.poll()
+        self.assertEqual([(r["kind"], r.get("boost"), r.get("text")) for r in self.pending()[1:]], [("boost", 7, "later")])
+        self.assertIn("skipped boost 8 by", open(os.path.join(self.cfgdir, "sync.log")).read())
 
     def test_an_edit_is_an_update_recorded_once(self):
         self.add(todo(42))
@@ -289,7 +296,7 @@ class AccountWide(AssignBase):
         self.stub.boosts["42"] = [boost(7)]
         self.poll()
         self.assertEqual([(r["kind"], r["project"]["id"]) for r in self.pending()],
-                         [("todo-request", OTHER), ("todo-comment", OTHER)])  # the boost on its to-do is not the agent's
+                         [("todo-request", OTHER), ("todo-comment", OTHER), ("boost", OTHER)])
         self.assertEqual(set(self.stub.projects("comments list")), {str(OTHER)})
         self.assertTrue(self.sync().reply(6, "Almost."))
         self.assertTrue(self.sync().todo_comment("request-42", "Started."))

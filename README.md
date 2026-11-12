@@ -414,7 +414,10 @@ the mark is not the answer), when it was set (`at`) and when it ends (`until`). 
 `--awaiting` reply there while the mark is unanswered and unexpired keeps its comment and
 `at` and only moves `until` 7 days on, so an answer to the first question, posted before
 the second reply, still counts. A comment or boost counts only when posted by `until`,
-whenever it is read. A mark whose `until` passed is dropped after the read, with a log line. A comment from someone not listened to,
+whenever it is read, and the earliest answer wins: a boost on the agent's comment made before
+the first answering comment is the answer, and that comment is then judged like any other. A
+mark whose `until` passed is dropped after the read, with a log line, unless a read of the
+boosts on its comment failed (it is read again next run). A comment from someone not listened to,
 or from the agent itself, leaves the mark as it is. `--awaiting` on any other reply (a card
 mirror comment, a chat or Ping line, a tracked to-do, a message) is logged and ignored,
 since everything there already reaches the agent.
@@ -424,7 +427,8 @@ comment, line, card, message or answer): one on someone else's comment or line, 
 chat or Ping the agent reads, is skipped with a `skipped boost <id> by <name> on <recording>:
 not on the agent's own recording` line in `sync.log`. The exception is a decision to-do (or a
 to-do or card a decision step is on), its comments and its decision steps, where any boost is
-decision feedback, whoever made what was boosted.
+decision feedback, whoever made what was boosted, and a to-do request and its comments, where
+a worded boost (not emoji only, as below) counts whoever made what was boosted.
 
 On a followed thread, any boost on the agent's comment that holds the awaiting mark, made
 by its `until`, is the awaited answer, whatever its text (a 👍 or ✅ is a yes): it is a
@@ -432,8 +436,8 @@ by its `until`, is the awaited answer, whatever its text (a 👍 or ✅ is a yes
 emoji only (emoji and spaces, such as 👍, ❤️, 🎉🎉 or 1️⃣) on one of the agent's comments
 there is skipped (one `skipped boost` line in `sync.log`), judged on the boost's text as the
 agent's received-boosts feed gives it. A boost with words, punctuation or a symbol that is
-not an emoji (`yes`, `a`, `?`, `!!`, `✓`) is relayed as before; on every other surface the
-emoji test does not apply.
+not an emoji (`yes`, `a`, `?`, `!!`, `✓`) is relayed as before; elsewhere the emoji test
+applies only to a boost on someone else's recording on a to-do request.
 
 **Group Pings.** A Ping with three or more people (two or more besides the agent among its
 participants; `pings.json` keeps `"group": true`) is read like a chat: a line is relayed

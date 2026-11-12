@@ -505,16 +505,18 @@ class Tools:
         its recording to be read again next run. `bucket` is where the recordings are
         (default the project). With `emoji` False, a boost whose confirmed content is emoji
         only (see emoji_only) is seen, logged as skipped and never recorded. A boost on
-        someone else's recording is skipped the same way unless `others` (a decision to-do,
-        its comments and decision steps, where any boost is decision feedback). `awaited`
-        is a followed thread's awaiting mark (rec["awaiting"]): any boost made by its `until` on
-        the agent's comment that holds it (its "comment") is that answer, whatever its text,
-        and clears the mark. A dry run records nothing.
+        someone else's recording is skipped the same way unless `others` allows it (see
+        confirmed). `awaited` is a followed thread's awaiting mark (rec["awaiting"]): any
+        boost made by its `until` on the agent's comment that holds it (its "comment") is
+        that answer, whatever its text, and clears the mark. A dry run records nothing.
+        Returns the ids of the recordings to read again next run (a failed read, or a
+        boost `confirmed` retries).
         """
         counts, seen = rec.get("boost_counts"), rec.get("boost_seen")
         seed_counts, seed_seen = counts is None, seen is None
         counts, seen = dict(counts or {}), list(seen or [])
         items = [(rid, url, None, None) for rid, url in always] + list(counted or [])
+        unread = set()
         for rid, url, count, creator in items:
             if count is not None:
                 if seed_counts:
@@ -526,6 +528,7 @@ class Tools:
                 boosts = self.bc("api", "get", f"/buckets/{bucket or self.project}/recordings/{rid}/boosts.json") or []
             except RuntimeError as e:
                 self.log(f"boosts {surface} {rid}: {e}")
+                unread.add(rid)
                 continue
             retry = False
             for b in sorted(boosts, key=lambda b: b.get("id", 0)):
@@ -558,12 +561,15 @@ class Tools:
                              "text": html.unescape(re.sub(r"<[^>]+>", "", b.get("content", ""))).strip(),
                              "url": url, "at": b.get("created_at"), **self.author(b.get("booster"), bucket)})
                 self.log(f"new owner boost on {surface} {rid}: {bid}")
-            if count is not None and not retry:
+            if retry:
+                unread.add(rid)
+            elif count is not None:
                 counts[str(rid)] = count
         if counted is not None:
             rec["boost_counts"] = counts
         if always or seen != list(rec.get("boost_seen") or []):
             rec["boost_seen"] = seen
+        return unread
 
     def received(self):
         """The acting person's received boosts by id: one fresh read of /my/boosts.json a run, shared by notifications
@@ -597,8 +603,9 @@ class Tools:
         content and time are then taken from that read. One it does not list is retried
         while it is younger than RECENT seconds (it may have landed after the read), and
         then dropped, logged. A boost on anyone else's recording is not aimed at the agent:
-        it is dropped, logged, unless `others` (decision feedback), when it is recorded as
-        read. Every boost is recorded as read when no agent acts (no profile, or the
+        it is dropped, logged, unless `others` is True (decision feedback), when it is
+        recorded as read, or "worded" (a to-do request) and its content is not emoji only
+        (see emoji_only). Every boost is recorded as read when no agent acts (no profile, or the
         owner's). `creator` is the recording's creator id when the caller knows it; else the
         recording is refetched, only for a boost the read does not list.
         """
@@ -613,7 +620,7 @@ class Tools:
         if creator == "retry":
             return "retry"
         if creator != me:
-            if others:
+            if others is True or others == "worded" and not emoji_only(b.get("content")):
                 return b
             who = (b.get("booster") or {}).get("name") or (b.get("booster") or {}).get("id")
             self.log(f"skipped boost {b.get('id')} by {who} on {rid}: not on the agent's own recording")
@@ -1200,8 +1207,9 @@ class Tools:
         boost there answers that decision), and on its comments (when their count changes)."""
         ctx, bucket = {"key": key, "todo": rec["todo"], **request_fields(rec)}, rec.get("bucket")
         # On a decision to-do, or a to-do or card a decision step is on, any boost is decision feedback, whoever made
-        # what was boosted; on a request otherwise, only a boost on the agent's own recording counts.
-        decision = not rec.get("request") or any(q.get("decider") for q in rec.get("subtasks") or [])
+        # what was boosted; on a request otherwise, a worded boost on anyone's recording counts, an emoji-only one only
+        # on the agent's own.
+        decision = True if not rec.get("request") or any(q.get("decider") for q in rec.get("subtasks") or []) else "worded"
         self.read_boosts(rec, "todo", ctx, always=[(rec["todo"], rec.get("url"))], bucket=bucket, others=decision)
         for n, q in enumerate(rec.get("subtasks") or [], 1):
             if not q.get("done") and q.get("id"):
@@ -1766,8 +1774,12 @@ class Tools:
         `mentions` is recorded even when the cursor has passed it, unless it already was or
         another reader read past it. Any other comment is a `thread-comment` only when the
         thread awaits an answer (the agent's `reply --awaiting` there, unexpired; the first
-        such comment after that reply is relayed and clears the mark, "why": "awaiting");
-        else it is skipped, with one "skipped" line in sync.log and no record and no boost.
+        such comment after that reply is relayed and clears the mark, "why": "awaiting", unless
+        a boost on the agent's comment holding the mark, made by that comment's time, answered
+        it first: the boosts are read before the comments for that), or the thread is the
+        agent's own ("why": "yours"); else it is skipped, with one "skipped" line in sync.log
+        and no record and no boost. Who made the thread is read before any record, and a
+        failed read leaves the whole thread to the next run.
         A relayed comment is queued for a 👀 when it is a mention or
         contains "?", a 👍 otherwise. `reply` answers either with a comment on the thread.
         `ptype` and `title` name the thread when the comments do not. The owner's boosts on
@@ -1805,11 +1817,26 @@ class Tools:
                 continue  # there before the notification: the thread's history, not new input
             if cid not in known:
                 fresh.append((c, cid in mentions or self.addressed(c.get("content"))))
+        heard = [(c, mention) for c, mention in fresh if self.hears(c.get("creator"), bucket=bucket)]
+        mine = False  # whether the agent made the thread itself: read (cached per run), before any record, when needed
+        if any(not mention for _, mention in heard):
+            creator = self.creator_of(thread, bucket)
+            if creator == "retry":
+                self.log(f"thread {thread}: who made it could not be read, retrying next run")
+                return
+            mine = creator is not None and creator == self.acting_id()
+        mark = rec.get("awaiting") or None
+        first = min((c for c, _ in heard if mark is not None and answered(c, mark)), key=lambda c: c.get("id", 0), default=None)
+        # The boosts first, so the earliest answer (a boost by the first answering comment's time, or that comment) wins.
+        awaited = None
+        if mark is not None and mark.get("comment"):
+            awaited = dict(mark, until=first.get("created_at") if first else mark.get("until"))
+        unread = self.read_boosts(rec, "thread-comment", {"bucket": int(bucket), "parent": thread, "title": rec.get("title")},
+                                  bucket=bucket, counted=boost_items(comments), emoji=False, awaited=awaited)
         mark, held, after_of = rec.get("awaiting") or None, Held(self), {}
         ordered = sorted(comments, key=lambda c: c.get("id", 0))
         for a, b in zip(ordered, ordered[1:]):
             after_of[b.get("id")] = a
-        mine = None  # whether the agent made the thread itself: read (cached per run) only when a comment needs it
         for c, mention in fresh:
             cid = c.get("id", 0)
             if held.fold(c, after_of.get(cid), f"thread {thread}"):
@@ -1819,12 +1846,6 @@ class Tools:
                     self.block(c.get("creator"), bucket, thread, cid, c.get("created_at"), what="comment")
                 continue
             answers = mark is not None and answered(c, mark)
-            if not mention and not answers and mine is None:
-                creator = self.creator_of(thread, bucket)
-                if creator == "retry":
-                    self.log(f"thread {thread}: who made it could not be read, retrying next run")
-                    return
-                mine = creator is not None and creator == self.acting_id()
             if not mention and not answers and not mine:
                 who = (c.get("creator") or {}).get("name") or (c.get("creator") or {}).get("id")
                 why_not = ("no answer awaited" if mark is None else
@@ -1857,11 +1878,9 @@ class Tools:
             rec.setdefault("ack", []).append([cid, self.read_ack(mention or "?" in text)])
             self.log(f"new owner {'mention' if mention else 'comment'} on {rec.get('parent_type') or 'thread'} {thread}: {cid}")
         held.flush()
-        self.read_boosts(rec, "thread-comment", {"bucket": int(bucket), "parent": thread, "title": rec.get("title")},
-                         bucket=bucket, counted=boost_items(comments), emoji=False,
-                         awaited=mark if mark is not None and mark.get("comment") else None)
-        mark = rec.get("awaiting") or None  # a boost may have answered it
-        if mark is not None and not history(now_iso(), mark.get("until"), slack=0):  # `until` passed, no answer by then
+        mark = rec.get("awaiting") or None
+        # `until` passed with no answer by then, and no boost on its comment is left to read
+        if mark is not None and not history(now_iso(), mark.get("until"), slack=0) and mark.get("comment") not in unread:
             rec.pop("awaiting", None)
             self.log(f"thread {thread}: the answer awaited since {mark.get('at')} did not come by {mark.get('until')}; "
                      "the mark is cleared")
