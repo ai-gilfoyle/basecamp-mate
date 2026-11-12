@@ -129,20 +129,23 @@ or the to-do commands for a tracked to-do). By `kind`:
   only questions; with `mention: true` it @mentions you (or replies to your line) in a chat
   you otherwise do not relay. A chat you watch (`sync.py watch`) relays every line, and a
   line from a watched chat in another project carries `project`. `reply --recording <line>` answers in the chat.
-- `ping`: a line the captain wrote to you in a Ping (a direct message), outside the project.
+- `ping`: a line the captain wrote to you in a Ping (a direct message), outside the project;
+  in a group Ping (three or more people), only a line that @mentions you or follows
+  your own line. Uploads right after it are its `attachments`.
   `reply --recording <line>` answers in the Ping. Never answer a Ping with the `basecamp`
   CLI directly.
 - `mention`: the captain @mentioned you, or used Basecamp's Reply on your comment, on
   something nothing else tracks (a document, someone else's to-do, a card).
   `reply --recording <comment>` answers there.
 - `thread-comment`: the captain commented on something you follow that nothing else
-  tracks, e.g. a card whose task has left the backlog, or a document, and it is the
-  first comment after your `reply --awaiting` there (`why` `awaiting`). Other comments on followed threads are
+  tracks, e.g. a card whose task has left the backlog, or a document, and either you made
+  that thread (`why` `yours`) or it is the first comment after your `reply --awaiting` there
+  (`why` `awaiting`). Other comments on followed threads are
   skipped. `reply` answers there; add `--awaiting` when your reply asks something that may
   be answered without an @mention.
 - `checkin`: a check-in question came due today.
 - `message-comment`: the captain commented on a report you posted.
-- `boost`: the captain boosted something you are watching; a boost can carry short text
+- `boost`: the captain boosted something of yours (or anything on a decision to-do); a boost can carry short text
   (e.g. "a", "yes", "later"). `surface` says where, `recording` is what was boosted and
   `text` is the boost.
 - `unmonitored`: the captain did something in the project that nothing you run handles:

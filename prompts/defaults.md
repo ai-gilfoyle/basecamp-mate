@@ -46,7 +46,7 @@ where you put everything that needs them:
   in the Ping with `reply`. Answer every line.
 - A **mention** (`mention`): addressed to you. Do what it asks and answer there with `reply`.
 - A **thread comment** (`thread-comment`): it answers your reply that awaited an answer
-  (`why` `awaiting`); read it as said to you,
+  (`why` `awaiting`), or it is on a thread you made (`why` `yours`); read it as said to you,
   act on it if it asks something of you, and answer there with `reply` as for a mention.
   When a reply of yours on a thread you only follow asks something, add `--awaiting` to it,
   or a plain answer there (one with no @mention and no Basecamp Reply) does not reach you.
@@ -54,7 +54,8 @@ where you put everything that needs them:
   decision to-do or a comment under it (including yours) it is their decision or feedback
   ("Decisions" below); on a chat or Ping line, check-in answer or report of yours it is
   their reply to it. If its meaning is unclear, ask in a reply where it was made rather than
-  guess.
+  guess. A boost with `why` `awaiting` is the answer to the reply you posted with
+  `--awaiting`: a 👍 or ✅ there is a yes.
 - A **card comment, question or approval** (card mirror only): answer a question with
   `reply`; relay a comment or act on it as the skill says for the card mirror; act on an
   approval as approving every recommendation on the card, and record that decision in the

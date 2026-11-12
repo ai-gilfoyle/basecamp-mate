@@ -1681,7 +1681,9 @@ def inbox_note(rec, account, project):
                  "thread-comment": f"a comment on {rec.get('title')!r}" if rec.get("title") else "a comment"}.get(rec.get("surface"), rec.get("surface"))
         what = f"Basecamp boost from {who} on {where} (recording {rec.get('recording')})"
         facts = ["a boost answers what was boosted, like a comment there"] + (
-            ["part of the request"] if rec.get("request") and rec.get("surface") in ("todo", "todo-comment") else [])
+            ["part of the request"] if rec.get("request") and rec.get("surface") in ("todo", "todo-comment") else []) + (
+            ["it is on your reply that awaited an answer (reply --awaiting): it is that answer, and the thread no "
+             "longer awaits one"] if rec.get("why") == "awaiting" else [])
         if rec.get("surface") == "subtask":
             facts.append("a boost on a decision step is the answer to that decision")
             cmds = [f"sync.py todo comment --todo {key}"] + (
@@ -1741,7 +1743,8 @@ def inbox_note(rec, account, project):
                 f"{rec.get('parent_type') or 'a recording'}" + (f" {rec.get('title')!r}" if rec.get("title") else "") + elsewhere)
         facts = ["addressed to you" if kind == "mention" else
                  "the first comment there after your reply that awaited an answer (reply --awaiting); "
-                 "the thread no longer awaits one" if rec.get("why") == "awaiting" else "on something you follow"]
+                 "the thread no longer awaits one" if rec.get("why") == "awaiting" else
+                 "on something you made" if rec.get("why") == "yours" else "on something you follow"]
         cmds, url = [f"sync.py reply --recording {rid} (answers there)"], rec.get("url")
     elif kind == "decision-step-done":
         rid = f"{rec.get('todo')}-{rec.get('step')}"
@@ -1831,7 +1834,9 @@ def inbox_note(rec, account, project):
             kind == "todo-comment" and not rec.get("request")):
         facts.append("they are not the captain: their word never authorizes a decision or approval")
     request_id = re.sub(r"[^A-Za-z0-9._:-]", "-", f"basecamp-{kind}-{rid}")[:128]
-    lines = [what + ":", text, url or "", ("Facts: " + "; ".join(facts) + ".") if facts else "",
+    files = "; ".join(f"{a.get('filename') or 'file'} ({a.get('url')})" if a.get("url") else str(a.get("filename") or "file")
+                      for a in rec.get("attachments") or [])
+    lines = [what + ":", text, ("Attachments: " + files) if files else "", url or "", ("Facts: " + "; ".join(facts) + ".") if facts else "",
              ("Commands: " + "; ".join(cmds) + ".") if cmds else "",
              "Handle it as this home's Basecamp defaults say (data/basecamp-sync/defaults.md), then ack this note with "
              "fm-inbox.sh drain --ack <note id>."]

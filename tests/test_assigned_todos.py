@@ -120,10 +120,11 @@ class Sweep(AssignBase):
         self.stub.boosts["42"] = [boost(7)]
         self.poll()
         kinds = [(r["kind"], r.get("comment") or r.get("boost")) for r in self.pending()]
-        # The comment already on it when it was assigned is part of the request too.
-        self.assertEqual(kinds, [("todo-request", None), ("todo-comment", 5), ("todo-comment", 6), ("boost", 7)])
+        # The comment already on it when it was assigned is part of the request too. A boost on the owner's own to-do is
+        # not aimed at the agent (only a decision to-do's are decision feedback): skipped.
+        self.assertEqual(kinds, [("todo-request", None), ("todo-comment", 5), ("todo-comment", 6)])
+        self.assertIn("skipped boost 7", open(os.path.join(self.cfgdir, "sync.log")).read())
         self.assertTrue(all(r.get("request") and r["title"] == "Rotate the API keys" for r in self.pending()[1:]))
-        self.assertEqual(self.pending()[-1]["surface"], "todo")
         self.assertTrue(self.sync().reply(6, "Prod is done."))
 
     def test_an_edit_is_an_update_recorded_once(self):
@@ -288,7 +289,7 @@ class AccountWide(AssignBase):
         self.stub.boosts["42"] = [boost(7)]
         self.poll()
         self.assertEqual([(r["kind"], r["project"]["id"]) for r in self.pending()],
-                         [("todo-request", OTHER), ("todo-comment", OTHER), ("boost", OTHER)])
+                         [("todo-request", OTHER), ("todo-comment", OTHER)])  # the boost on its to-do is not the agent's
         self.assertEqual(set(self.stub.projects("comments list")), {str(OTHER)})
         self.assertTrue(self.sync().reply(6, "Almost."))
         self.assertTrue(self.sync().todo_comment("request-42", "Started."))

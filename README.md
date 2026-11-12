@@ -389,33 +389,61 @@ reaches the agent only when one of these holds:
 
 - it @mentions the agent, or it is a Basecamp Reply to one of the agent's comments (Basecamp
   sends both as a mention notification, though a Reply's text has no @mention): a `mention`;
-- the thread awaits an answer: the agent's last `sync.py reply --awaiting` there has not
-  expired and nobody listened to has commented since. The first comment after that reply,
-  from anyone listened to but the agent, is relayed (`thread-comment` with `"why":
-  "awaiting"`, or a `mention`) and clears the mark.
+- the thread awaits an answer: a `sync.py reply --awaiting` there set a mark that has not
+  expired, and nobody listened to has answered since. The first comment after the reply that
+  set it, from anyone listened to but the agent, is relayed (`thread-comment` with `"why":
+  "awaiting"`, or a `mention`) and clears the mark; so does a boost on that reply (below);
+- the agent made the thread itself (its login is the creator of the card, document, upload
+  or other recording; read once a run): `thread-comment` with `"why": "yours"`.
 
-Any other comment is skipped: one `skipped comment <id> by <name> on <type> <thread>` line in
-`sync.log`, no record and no 👀 or 👍. The thread's cursor still moves past it, so it is
+Any other comment is skipped: one `skipped comment <id> by <name> on <type> <thread>: <why>`
+line in `sync.log` (no answer awaited, or posted before the reply that awaits one, or after
+the mark ended), no record and no 👀 or 👍. The thread's cursor still moves past it, so it is
 never read again, unless a mention notification later names it (a Reply that arrived
 while the thread was being read): then it is recorded as a `mention`, unless it already
-was. The rule is deterministic: the text of a comment (a `?`, a
-name) never decides it. Pings, chat lines, @mentions, to-do and card requests, completions
-and every other reader are unchanged.
+was. The rule is deterministic: the text of a comment (a `?`, a name) never decides it, so
+an ask that only names the agent, with no @mention or Reply, is skipped.
+A comment of attachments only (an image, a file) right after a relayed comment by the same
+person, in the same read, is folded into that comment's record (`attachments`: `filename`
+and `url` each) instead of being judged on its own. Chat lines, @mentions, to-do and card
+requests, completions and every other reader are unchanged; group Pings are read as below.
 
 `sync.py reply --awaiting` on a thread comment or mention sets the mark for 7 days: `threads.json` keeps, for the thread, `awaiting` with the
 agent's comment id (none when it answered with `--boost`, and then a comment dated before
-the mark is not the answer), when it was set (`at`) and when it ends (`until`). An expired
-mark is dropped at the next read, with a log line. A comment from someone not listened to,
+the mark is not the answer), when it was set (`at`) and when it ends (`until`). A second
+`--awaiting` reply there while the mark is unanswered and unexpired keeps its comment and
+`at` and only moves `until` 7 days on, so an answer to the first question, posted before
+the second reply, still counts. A comment or boost counts only when posted by `until`,
+whenever it is read. A mark whose `until` passed is dropped after the read, with a log line. A comment from someone not listened to,
 or from the agent itself, leaves the mark as it is. `--awaiting` on any other reply (a card
 mirror comment, a chat or Ping line, a tracked to-do, a message) is logged and ignored,
 since everything there already reaches the agent.
 
-Boosts on a followed thread follow the same rule: an owner's boost of emoji only (emoji and
-spaces, such as 👍, ❤️, 🎉🎉 or 1️⃣) on a comment there is skipped (one `skipped boost` line in
-`sync.log`), judged on the boost's text as the agent's received-boosts feed gives it. A
-boost does not clear the mark. A boost with words, punctuation or a symbol that is not an
-emoji (`yes`, `a`, `?`,
-`!!`, `✓`) is relayed as before, and boosts on every other surface are unchanged.
+**Boosts on other people's things.** A boost counts only on the agent's own recording (its
+comment, line, card, message or answer): one on someone else's comment or line, even in a
+chat or Ping the agent reads, is skipped with a `skipped boost <id> by <name> on <recording>:
+not on the agent's own recording` line in `sync.log`. The exception is a decision to-do (or a
+to-do or card a decision step is on), its comments and its decision steps, where any boost is
+decision feedback, whoever made what was boosted.
+
+On a followed thread, any boost on the agent's comment that holds the awaiting mark, made
+by its `until`, is the awaited answer, whatever its text (a 👍 or ✅ is a yes): it is a
+`boost` record with `"why": "awaiting"` and clears the mark. Otherwise an owner's boost of
+emoji only (emoji and spaces, such as 👍, ❤️, 🎉🎉 or 1️⃣) on one of the agent's comments
+there is skipped (one `skipped boost` line in `sync.log`), judged on the boost's text as the
+agent's received-boosts feed gives it. A boost with words, punctuation or a symbol that is
+not an emoji (`yes`, `a`, `?`, `!!`, `✓`) is relayed as before; on every other surface the
+emoji test does not apply.
+
+**Group Pings.** A Ping with three or more people (two or more besides the agent among its
+participants; `pings.json` keeps `"group": true`) is read like a chat: a line is relayed
+only when it @mentions the agent or directly follows one of
+the agent's own lines there. Any other line is skipped (`skipped line <id> by <name> in
+group Ping <chat>`), and someone not listened to who does not address the agent gets no
+automatic reply. A Ping with one other person relays every line of theirs, as before. In
+any Ping a line that is only uploads, right after a relayed line by the same person in the
+same read, is folded into that line's record (`attachments`); one that follows nothing
+relayed is its own `ping` record with its `attachments` and empty `text`.
 
 **Scope.** Items in other projects are another home's: they are never read, acted on or
 marked read here, except a Ping (with `pings` on), a to-do request with `"scope":
@@ -1562,8 +1590,10 @@ stay in UTC.
   Either carries `project` (`id`, `name`) when the thread is in another project of the
   account (`"mentions": {"scope": "account"}`).
 - `ping`: `bucket` (the Ping's circle), `chat`, `line` (ids), `title` (the Ping's name),
-  `url`, `text`, `at`. The owner wrote to the agent's login in a Ping; answer there with
-  `sync.py reply --recording <line>`.
+  `url`, `text`, `at`, and `attachments` (`filename`, `url` each) when the line had uploads
+  or uploads right after it were folded in. The owner wrote to the agent's login in a Ping;
+  answer there with `sync.py reply --recording <line>`. A `mention` or `thread-comment` can
+  carry `attachments` the same way.
 - `checkin`: `questionnaire`, `question` (ids), `date` (local, `YYYY-MM-DD`), `title`,
   `url`, `at`. A check-in question came due today; answer it with `sync.py answer`. An
   instruction in it is the captain's only when `captain` is true.
@@ -1601,7 +1631,8 @@ stay in UTC.
   `repo`, `card`; `key`, `todo`; `question`; `message`, `subject`; `bucket`, `parent`, `title`), `recording` (the
   boosted recording), `boost` (id), `text` (the boost's text), `url`, `at`. The owner's
   boost is an answer to what was boosted, like a comment (on a `thread-comment` surface an
-  emoji-only boost is skipped); a 👍 on an assigned card by
+  emoji-only boost is skipped unless it is on the reply that awaits an answer, when it
+  carries `"why": "awaiting"`); a 👍 on an assigned card by
   anyone but the captain is a `boost`, not an `approval`.
 - `unmonitored`: `key` (`<what happened>/<recording type>`), `event_type`, `recording_type`,
   `notification` (the notification's or boost's id; `event` in records from the retired

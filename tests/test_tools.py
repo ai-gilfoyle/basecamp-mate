@@ -604,10 +604,11 @@ class Boosts(ToolBase):
 
     def test_history_is_seeded_not_replayed(self):
         self.cfg(chats=[77])
-        self.stub.lines = {"77": [line(1)]}
+        self.stub.lines = {"77": [line(1, who=ACTING)]}  # the agent's own line: its boosts count
         self.poll()
         self.stub.lines["77"][0]["boosts_count"] = 1
         self.stub.boosts["1"] = [boost(60)]
+        self.stub.my_boosts = received(1, boost(60), boost(62, content="more"))
         chats = os.path.join(self.cfgdir, "chats.json")
         state = json.load(open(chats))
         state["77"].pop("boost_counts")  # chats.json from before boosts were read
@@ -668,7 +669,8 @@ class Boosts(ToolBase):
         self.stub.my_boosts = received(20, boost(50, content="agree"))
         self.poll()
         self.poll()
-        self.assertEqual(self.boosts(), [("message", 20, 50, "agree"), ("message-comment", 25, 51, "a")])
+        # The captain's own comment 25 is not the agent's: a boost on it is skipped.
+        self.assertEqual(self.boosts(), [("message", 20, 50, "agree")])
         self.assertEqual(self.pending()[0]["subject"], "Report")
 
     def test_owner_profile_reads_no_agent_posts(self):

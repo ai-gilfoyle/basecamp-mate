@@ -89,14 +89,16 @@ class Confirmed(NotifBase):
         self.poll()
         self.assertEqual(self.boosts(), [(60, CAPTAIN, "thanks")])
 
-    def test_a_boost_on_someone_elses_recording_is_recorded_as_read(self):
+    def test_a_boost_on_someone_elses_recording_is_skipped(self):
+        """It is not aimed at the agent (one person's boost on another's line): logged, never recorded."""
         theirs = dict(line(3, content="ship it"), boosts_count=0)
         self.stub.lines["77"].append(theirs)
         self.poll()
         theirs["boosts_count"] = 1
         self.stub.boosts["3"] = [dict(boost(70, content="yes"), created_at=ago(3600))]
         self.poll()
-        self.assertEqual([(r["boost"], r["text"]) for r in self.pending() if r["kind"] == "boost"], [(70, "yes")])
+        self.assertEqual([r for r in self.pending() if r["kind"] == "boost"], [])
+        self.assertIn("skipped boost 70 by 33333333 on 3: not on the agent's own recording", open(os.path.join(self.cfgdir, "sync.log")).read())
 
 
 class CardApproval(NotifBase):

@@ -263,10 +263,15 @@ that read.
 - `ping`: a line the captain wrote to this home's login in a Ping (a direct message, in a
   bucket of its own). Treat it like a `chat-question` from an `every_line` chat, and answer
   in the Ping with `sync.py reply --recording <line id>`; never with the `basecamp` CLI.
+  In a group Ping (three or more people) only a line that @mentions you or directly
+  follows your own line arrives; the rest is skipped. A line of
+  uploads right after the person's relayed line comes as that record's `attachments`.
 - `mention`, `thread-comment`: the captain @mentioned this home's login in, or commented
   on, something it follows that nothing else tracks (a card whose task left the backlog, a
   document, someone else's to-do). A mention (an @mention, or a Basecamp Reply to your
-  comment) is addressed to you. A thread comment arrives only when it is the first
+  comment) is addressed to you; attachment-only comments right after it come as its
+  `attachments`. A comment that only names you, with no @mention or Reply, does not arrive.
+  A thread comment arrives only on a thread you made (`why` `yours`) or as the first
   comment after your `reply --awaiting` there (`why` `awaiting`: the answer to your
   question); every other comment on a followed thread is skipped, with a `skipped comment`
   line in `sync.log`. Handle it like a card `comment` (relay outside the main firstmate's
@@ -290,7 +295,11 @@ that read.
   main firstmate's home), then answer with `sync.py reply --recording <comment id>`.
 - `boost`: the captain boosted something being watched (`surface`: chat, ping, card,
   card-comment, todo, todo-comment, checkin-answer, message, message-comment, thread-comment); a boost
-  can carry short text. On `thread-comment` an emoji-only boost (👍, ❤️) is skipped. It is an answer to what was boosted, like a comment there: on a
+  can carry short text. Only a boost on your own comment, line, card, message or answer
+  arrives, except on a decision to-do, its comments and its decision steps, where any boost
+  does. On `thread-comment` any boost on your reply that awaits an answer is that answer
+  (`why` `awaiting`, a 👍 is a yes) and clears the mark; an emoji-only boost (👍, ❤️) on
+  your other comments there is skipped. It is an answer to what was boosted, like a comment there: on a
   decision to-do or a comment under it, a decision or feedback as above; on a to-do request
   (`request: true`), more about that request; elsewhere a reply
   to that line, answer or post. Relay it like a comment outside the main firstmate's home.

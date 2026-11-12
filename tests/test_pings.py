@@ -243,5 +243,63 @@ class Note(unittest.TestCase):
         self.assertIn("a line in a Ping", body)
 
 
+
+class GroupPings(PingBase):
+    """A Ping with three or more people is read like a chat: only lines that @mention the agent, or directly follow
+    its own line, are relayed."""
+
+    OPERATOR = 7
+
+    def setUp(self):
+        super().setUp()
+        self.cfg(people=[self.OPERATOR])
+        self.stub.readings["unreads"] = [reading(people=(CAPTAIN, self.OPERATOR, 8))]
+
+    def test_a_group_ping_relays_only_lines_for_the_agent(self):
+        self.say(ping_line(2, content="<p>Erica, did the import finish?</p>"),
+                 ping_line(3, who=self.OPERATOR, content="<p>yes, all done</p>"),
+                 ping_line(4, content=f'<p><bc-attachment sgid="sgid-{ACTING}"></bc-attachment> can you check?</p>'),
+                 ping_line(5, who=ACTING, content="<p>Checking now.</p>"),
+                 ping_line(6, who=self.OPERATOR, content="<p>thanks</p>"),
+                 ping_line(7, content="<p>and the logs too</p>"),
+                 ping_line(8, content="<p>Gilfoyle, the staging one as well</p>"),  # a name is no @mention
+                 ping_line(9, who=1, content="<p>who is this?</p>"))
+        self.poll()
+        self.assertTrue(self.state()["pings"][str(CHAT)]["group"])
+        self.assertEqual([r["line"] for r in self.pending()], [4, 6])
+        self.assertIn(f"skipped line 2 by {CAPTAIN} in group Ping {CHAT}", self.log())
+        self.assertIn("skipped line 7", self.log())
+        self.assertIn("skipped line 8", self.log())
+        self.assertFalse([p for p in self.stub.paths("post") if "/chats/" in p])  # no automatic reply to person 1
+
+    def test_a_ping_with_one_person_besides_the_agent_still_relays_every_line(self):
+        self.stub.readings["unreads"] = [reading(people=(CAPTAIN,))]
+        self.say(ping_line(2, content="<p>Erica, did the import finish?</p>"))
+        self.poll()
+        self.assertEqual([r["line"] for r in self.pending()], [2])
+        self.assertFalse(self.state()["pings"][str(CHAT)]["group"])
+
+
+class PingAttachments(PingBase):
+    def upload(self, id, who=CAPTAIN):
+        return dict(ping_line(id, who=who, content=""), type="Chat::Lines::Upload",
+                    attachments=[{"filename": "image.png", "url": f"https://x/{id}.png"}])
+
+    def test_an_upload_right_after_the_persons_line_folds_into_its_note(self):
+        self.say(ping_line(2), self.upload(3), self.upload(4))
+        self.poll()
+        [rec] = self.pending()
+        self.assertEqual((rec["line"], [a["url"] for a in rec["attachments"]]), (2, ["https://x/3.png", "https://x/4.png"]))
+        self.assertEqual(self.stub.posted(), [("2", EYES)])
+        _, body = behaviors.inbox_note(rec, "1", str(PROJECT))
+        self.assertIn("Attachments: image.png (https://x/3.png); image.png (https://x/4.png)", body)
+
+    def test_an_upload_alone_is_its_own_note_with_its_attachment(self):
+        self.say(self.upload(2))
+        self.poll()
+        [rec] = self.pending()
+        self.assertEqual((rec["line"], rec["text"], rec["attachments"]), (2, "", [{"filename": "image.png", "url": "https://x/2.png"}]))
+
+
 if __name__ == "__main__":
     unittest.main()

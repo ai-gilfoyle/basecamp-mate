@@ -131,7 +131,9 @@ class ProjectPeoplePings(PingBase):
         self.cfg(project_people={str(PROJECT): [GUEST]})
         self.stub.readings["unreads"] = [reading(people=(CAPTAIN, GUEST, ACTING))]
         self.poll()
-        self.say(ping_line(2, who=GUEST, at=NEW), ping_line(3, at=NEW))
+        # Three people make it a group Ping, read like a chat: both lines @mention the agent, so only who is heard decides.
+        mention = f'<p><bc-attachment sgid="sgid-{ACTING}"></bc-attachment> can you look?</p>'
+        self.say(ping_line(2, who=GUEST, at=NEW, content=mention), ping_line(3, at=NEW, content=mention))
         self.poll()
         self.assertEqual([r["line"] for r in self.pending()], [3])
 
