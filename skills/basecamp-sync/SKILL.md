@@ -297,7 +297,8 @@ that read.
   card-comment, todo, todo-comment, checkin-answer, message, message-comment, thread-comment); a boost
   can carry short text. Only a boost on your own comment, line, card, message or answer
   arrives, except on a decision to-do, its comments and its decision steps, where any boost
-  does, and on a to-do request and its comments, where a worded (not emoji-only) boost does. On `thread-comment` any boost on your reply that awaits an answer is that answer
+  does, and on a to-do request and its comments, where a worded (not emoji-only) boost
+  does. On `thread-comment` any boost on your reply that awaits an answer is that answer
   (`why` `awaiting`, a 👍 is a yes) and clears the mark; an emoji-only boost (👍, ❤️) on
   your other comments there is skipped. It is an answer to what was boosted, like a comment there: on a
   decision to-do or a comment under it, a decision or feedback as above; on a to-do request

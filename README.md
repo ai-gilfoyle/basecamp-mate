@@ -77,7 +77,7 @@ policy. Each does one thing to the configured account and project:
 | boost reader | reader | reads the boosts on the agent login's own recordings (`/my/boosts.json`, one call) and hands each new one to a behavior; records nothing itself |
 | mark read | primitive | marks the agent login's notifications read (`basecamp notifications read`, i.e. `PUT /my/unreads.json`) |
 | Ping reader | reader | finds the Pings (direct messages) the agent's login is in with the owner through `/my/readings.json` and records each new line the owner writes there as `ping` |
-| thread reader | reader | records the owner's new comments on any other thread the agent's login follows or is @mentioned in (a card whatever its backlog state, a document, an upload, someone else's to-do or message) as `mention` when they @mention or Reply to the agent, and as `thread-comment` only when the thread awaits the agent's answer (see "Followed threads" below; it skips the rest), and a mention in a chat nothing relays as `chat-question`; in the project, or, with `"mentions": {"scope": "account"}`, any project of the account |
+| thread reader | reader | records the owner's new comments on any other thread the agent's login follows or is @mentioned in (a card whatever its backlog state, a document, an upload, someone else's to-do or message) as `mention` when they @mention or Reply to the agent, and as `thread-comment` only when the thread awaits the agent's answer or the agent made it (see "Followed threads" below; it skips the rest), and a mention in a chat nothing relays as `chat-question`; in the project, or, with `"mentions": {"scope": "account"}`, any project of the account |
 | to-do request readers | reader | find the open to-dos in the project (or, with `"scope": "account"`, any project of the account) assigned to the agent's login (`/my/assignments.json`, or a to-do event) and record each one a listened-to person assigned as `todo-request`, once; then its edits and closing as `todo-request-update` and `todo-request-closed` |
 | message comment reader | reader | records the owner's new comments on the agent's own recent Message Board posts as `message-comment` |
 | boost readers | reader | record the owner's new boosts, with their text, on every monitored surface as `boost` (below); a boost on the agent login's own recording only once its received-boosts feed lists it |
@@ -1587,8 +1587,9 @@ stay in UTC.
 - `thread-comment`: `bucket`, `parent` (the thread's id), `parent_type` (e.g. `Document`,
   `Kanban::Card`, `Todo`), `title`, `comment` (id), `question`, `url`, `text`, `at`, `why`.
   A listened-to person commented on a thread the agent follows that no other reader tracks
-  (a card nothing mirrors, a document, someone else's to-do), and it is the first comment
-  after the agent's `reply --awaiting` there (`"why": "awaiting"`; see "Followed threads").
+  (a card nothing mirrors, a document, someone else's to-do), and either it is the first
+  comment after the agent's `reply --awaiting` there (`"why": "awaiting"`) or the agent
+  made the thread (`"why": "yours"`); see "Followed threads".
   Answer with `sync.py reply
   --recording <comment>`, which comments on the thread.
 - `mention`: the same fields but `why`, for a comment that @mentions the agent or is a
