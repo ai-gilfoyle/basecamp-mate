@@ -70,6 +70,7 @@ Usage: sync.py --home <home> --config <config.json> [--all] [--dry-run] [--inclu
        sync.py post-message --home <home> --config <config.json> --subject <text> --body-file <file> [--dry-run]
        sync.py unmonitored list|handle|forget --home <home> --config <config.json> [--key <key>] [--decision <text>] [--dry-run]
        sync.py backup --home <home> --config <config.json> [--dry-run]
+       sync.py renew --home <home> --config <config.json>      (run.sh, before each run: renew the token, guarding the stored login)
        sync.py timesheet start --home <home> --config <config.json> --key <key> [--on <to-do or card URL>] --workdir <dir>... [--dry-run]
        sync.py timesheet stop|post --home <home> --config <config.json> [--key <key>] [--dry-run]
        sync.py behaviors --home <home> --config <config.json>
@@ -81,7 +82,7 @@ Usage: sync.py --home <home> --config <config.json> [--all] [--dry-run] [--inclu
 import argparse, json, subprocess, sys
 from datetime import datetime, timezone
 
-import behaviors, runs
+import behaviors, login, runs
 from behaviors import COLUMNS, render_decision, render_release, inline_md  # noqa: F401
 from tools import (Tools, THUMBS, EYES, BOOST_MAX, is_due, render_reply, is_emoji, is_thumbs_up,  # noqa: F401
                    parse_lavish, parse_show, task_item, none, parse_chat_url)
@@ -476,6 +477,16 @@ def cli(argv=None, runner=subprocess.run):
         ap.add_argument("--once", action="store_true", help=argparse.SUPPRESS)
         ap.add_argument("--dry-run", action="store_true", help=argparse.SUPPRESS)
         return listen(ap.parse_args(argv[1:]), runner)
+    if argv[:1] == ["renew"]:
+        a = common("sync.py renew", "Before a timer run (run.sh): renew the login's token when it is near expiry, "
+                   "keeping a copy of the CLI's credentials.json to restore if the renewal loses the login (login.py). "
+                   f"Exits {login.OFFLINE} when Basecamp cannot be reached, so the run is skipped.").parse_args(argv[1:])
+        s = Sync(a.home, a.config, runner=runner)
+        try:
+            return login.Login(s, runner=runner).renew()
+        except Exception as e:
+            s.log(f"FAILED login guard {type(e).__name__}: {e}")
+            return 0
     if argv[:1] == ["status"]:
         argparse.ArgumentParser(prog="sync.py status", description="List the sync runs recorded on this computer (live or "
                                 "stale, what each watches and with which login) and any sync.py running unrecorded.").parse_args(argv[1:])

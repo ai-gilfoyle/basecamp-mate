@@ -21,7 +21,9 @@ Run the sync as its own Basecamp user instead of the owner's. Ids below are plac
    basecamp api get /projects/22222222.json -P firstmate -a 1111111
    ```
 5. **Token lifetime.** This login's token lasts about an hour. `basecamp auth refresh -P firstmate`
-   renews it unattended, and `run.sh` does that on every run (inside its 240-second cap).
+   renews it unattended, and `run.sh` does that when it is within 15 minutes of expiry
+   (`sync.py renew`, inside its 240-second cap). That step backs up the saved login
+   first and restores it if a renewal loses it; see "Run it once" in the README.
 6. **Configure the sync.** Set `"profile": "firstmate"` in the config. Keep `"captain"` as
    your own person id: it is who cards are assigned to and whose comments and 👍 count. The
    firstmate user's own comments and boosts are ignored.

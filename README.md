@@ -1266,9 +1266,36 @@ python3 sync.py --home ~/path/to/home --config ~/path/to/home/data/basecamp-sync
 
 A run from the command line runs only the steps that are due, like the timer; add `--all`
 to run every step now. Drop `--dry-run` to apply. `run.sh <home> <config> [--dry-run]` is
-the scheduled entry point: it refreshes the Basecamp OAuth token when under three days remain (logging a
-failure to `sync.log`), then runs `sync.py`, all within a 240-second cap (each token
-call gets at most 30 seconds). A run first claims what its config watches and refuses to
+the scheduled entry point: it runs `sync.py renew`, then `sync.py`, all within a 240-second
+cap (the renewal gets at most 80 seconds, each `basecamp auth` call 30).
+
+`sync.py renew` ([`login.py`](login.py)) renews the OAuth token when it expires within 15
+minutes (by the token's own `expires_at`) and guards the login the `basecamp` CLI keeps in
+`credentials.json` (its file store, used with `BASECAMP_NO_KEYRING=1`):
+
+- Before a renewal it copies that file to `credentials.json.basecamp-mate-backup` beside it
+  (mode 0600), but only while the file still holds the profile. After a renewal that worked
+  it copies the file again, so the copy never holds a refresh token the renewal spent. Every
+  home and login shares the copy, so it is merged rather than replaced: an entry the file has
+  already lost stays in the copy.
+- It guards only the file store: `BASECAMP_NO_KEYRING` is set, `auth status` reports
+  `"storage": "file"`, or status names no store and the backup holds the login. A login kept
+  in the system keyring is only renewed, even when an old file backup holds it.
+- Each entry is restored at most once per copy, by its own mark, so an emptied file never
+  brings back another profile's login that was already restored and refused.
+- If the profile is missing after the renewal, it puts the missing entry back from the copy
+  (every entry when the whole file was emptied) and logs one `login: restored` line. It
+  does this once per copy: if the restored login is refused again, it logs one
+  `FAILED token refresh` line naming the `basecamp auth login` to run and stops renewing,
+  since Basecamp blocks an address after a handful of refused renewals.
+- After a renewal it flushes the file to disk, so a power cut cannot bring back the
+  refresh token the renewal just spent.
+- A run that cannot reach Basecamp (the minute after boot, before the network is up)
+  leaves the stored login alone and skips the sync. This is not counted as a login failure;
+  one `network:` line marks when the outage starts and one when it ends.
+
+A failed renewal logs its `FAILED token refresh` line once per cause and then hourly, not
+every run. A run first claims what its config watches and refuses to
 run beside another home's live run on the same thing with the same login;
 `--allow-duplicate` overrides that for one run (see "One home per project and login").
 
@@ -1282,7 +1309,8 @@ basecamp auth login -P firstmate --account <account id>
 basecamp api get /my/profile.json -P firstmate
 ```
 
-Its token is short-lived; `run.sh` renews it with `basecamp auth refresh -P <profile>`.
+Its token is short-lived; `run.sh` renews it with `basecamp auth refresh -P <profile>`
+(through `sync.py renew`, which guards the stored login; see "Run it once").
 Full setup steps, and what changes for the captain: [docs/firstmate-account.md](docs/firstmate-account.md).
 
 ## A systemd timer by hand
@@ -1394,6 +1422,14 @@ a profile; `tests/test_runs.py` covers the run guard: claiming, refusing and nam
 home's live overlapping run (project, login by person or profile, Pings), logging it once
 then hourly, stale, removed and recycled-pid claims, the override, dry runs, commands,
 `sync.py status`, and `doctor`'s overlap check;
+`tests/test_login.py` covers the login guard (`sync.py renew`) with a stubbed `basecamp auth`
+and a temporary `credentials.json`: a renewal that empties the file restored from the
+backup, a network-down run leaving the file untouched, only the lost profile put back beside
+another login's newer entry, a restored login lost again not restored twice, the backup
+retaken after a good renewal and keeping another profile's entry the file already lost, the
+restore marks read and written under the CLI's locks, an emptied file not bringing back
+another profile already restored once, a lost file-store login restored without
+`BASECAMP_NO_KEYRING`, a keyring login renewed without the guard or a false FAILED line, no renewal far from expiry, and one FAILED line per cause;
 `tests/test_assigned_todos.py` covers to-do requests with a stubbed `/my/assignments.json`:
 the sweep, who assigned it, comments, boosts, edits and closing, reassignment, the agent
 completing it, the `Assignment` and `Completion` notifications, and their notes, scheduled
