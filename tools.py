@@ -3409,8 +3409,10 @@ def render_reply(text, mention=None):
     return "".join(out)
 
 
-# An @name: "@Fitz" or "@Caleb.LeNoir", not the @ of an email address or inside a path.
-MENTION = re.compile(r"(?<![\w.@/+-])@([^\W\d_][\w-]*(?:\.[^\W\d_][\w-]*)*)")
+# An @name: "@Fitz" or "@Caleb.LeNoir", also inside *, _ or ~ emphasis, not the @ of an email address (snake_case@x,
+# a_@x) or inside a path; a handle never ends in _ or -, so "_@Fitz_" is Fitz in italics.
+NAME = r"[^\W\d_](?:[\w-]*[^\W_])?"
+MENTION = re.compile(rf"(?<![^\W_])(?<![.@/+-])(?<![^\W_]_)(?<![^\W_]__)@({NAME}(?:\.{NAME})*)")
 
 
 def md_inline(text, mention=None):

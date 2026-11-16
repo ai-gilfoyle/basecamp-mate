@@ -1156,6 +1156,13 @@ class RenderReply(unittest.TestCase):
                                '</li></ul><blockquote>me@Fitz.io @Fitz</blockquote><pre>@Fitz</pre>')
         self.assertEqual(sync.render_reply("@Fitz"), "<div>@Fitz</div>")
 
+    def test_mentions_inside_emphasis_but_not_in_emails(self):
+        tags = {"Caleb.LeNoir": "<M1>", "Fitz": "<M2>"}
+        body = sync.render_reply("__@Caleb.LeNoir__ _@Fitz_ *@Fitz* ~~@Fitz~~ @Fitz-, snake_case@Fitz.io a_@Fitz.io "
+                                 "b__@Fitz.io `_@Fitz_`", tags.get)
+        self.assertEqual(body, "<div><strong><M1></strong> <em><M2></em> <em><M2></em> <strike><M2></strike> <M2>-, "
+                               "snake_case@Fitz.io a_@Fitz.io b__@Fitz.io _@Fitz_</div>")
+
     def test_no_raw_html_or_newlines(self):
         body = sync.render_reply("<script>x</script>\n- <i>a</i>\n\n**<b>**")
         self.assertNotIn("<script>", body)
