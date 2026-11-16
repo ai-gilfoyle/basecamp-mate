@@ -24,7 +24,7 @@ class Stub:
         self.lavish, self.lavish_calls = "", 0  # stdout of plain `lavish-axi`, or an exception to raise
         self.readings, self.my_boosts = {"unreads": [], "reads": []}, []  # /my/readings.json, /my/boosts.json
         self.marked = []  # the ids of each `notifications read` call
-        self.pingable = []  # `people pingable`: the people the acting login can @mention; None makes the read fail
+        self.pingable = []  # `people pingable`: the people the acting login can @mention; None fails it, an exception is raised
 
     def __call__(self, cmd, **kw):
         if cmd[0] == "lavish-axi":
@@ -52,6 +52,8 @@ class Stub:
         elif args[:3] == ["api", "get", "/my/boosts.json"]:
             data = self.my_boosts
         elif args[:2] == ["people", "pingable"]:
+            if isinstance(self.pingable, Exception):
+                raise self.pingable
             if self.pingable is None:
                 return SimpleNamespace(stdout=json.dumps({"ok": False, "error": "boom"}), stderr="", returncode=1)
             data = self.pingable
@@ -1162,6 +1164,12 @@ class RenderReply(unittest.TestCase):
                                  "b__@Fitz.io `_@Fitz_`", tags.get)
         self.assertEqual(body, "<div><strong><M1></strong> <em><M2></em> <em><M2></em> <strike><M2></strike> <M2>-, "
                                "snake_case@Fitz.io a_@Fitz.io b__@Fitz.io _@Fitz_</div>")
+
+    def test_mentions_with_apostrophes(self):
+        tags = {"Sean.O'Connor": "<M1>", "Fitz": "<M2>"}
+        body = sync.render_reply("@Sean.O'Connor, @Sean.O’Connor's and @Fitz's or @Fitz’s turn, @Sean.O'Nobody",
+                                 lambda h: tags.get(h.replace("’", "'")))
+        self.assertEqual(body, "<div><M1>, <M1>&#x27;s and <M2>&#x27;s or <M2>’s turn, @Sean.O&#x27;Nobody</div>")
 
     def test_no_raw_html_or_newlines(self):
         body = sync.render_reply("<script>x</script>\n- <i>a</i>\n\n**<b>**")

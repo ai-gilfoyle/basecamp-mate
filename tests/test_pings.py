@@ -2,7 +2,7 @@
 
 /my/readings.json and the Ping chats are stubbed; nothing touches the network.
 """
-import json, os, sys, unittest
+import json, os, subprocess, sys, unittest
 from types import SimpleNamespace
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -181,6 +181,17 @@ class Reply(PingBase):
 
     def test_reply_keeps_at_names_as_text_when_people_cannot_be_read(self):
         self.stub.pingable = None
+        self.assertTrue(self.sync().reply(2, "@Caleb.LeNoir done."))
+        self.assertEqual(self.stub.chat_posts(), [(str(CHAT), "<div>@Caleb.LeNoir done.</div>")])
+
+    def test_reply_matches_names_with_apostrophes(self):
+        self.stub.pingable = [{"id": 5, "name": "Sean O’Connor", "attachable_sgid": "sg-sean"}]
+        self.assertTrue(self.sync().reply(2, "@Sean.O'Connor done."))
+        self.assertEqual(self.stub.chat_posts(), [(str(CHAT), '<div><bc-attachment sgid="sg-sean" '
+                                                   'content-type="application/vnd.basecamp.mention"></bc-attachment> done.</div>')])
+
+    def test_reply_keeps_at_names_as_text_when_the_people_read_times_out(self):
+        self.stub.pingable = subprocess.TimeoutExpired(["basecamp"], 120)
         self.assertTrue(self.sync().reply(2, "@Caleb.LeNoir done."))
         self.assertEqual(self.stub.chat_posts(), [(str(CHAT), "<div>@Caleb.LeNoir done.</div>")])
 

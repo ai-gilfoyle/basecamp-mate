@@ -2486,13 +2486,13 @@ class Tools:
         if self._pingable is None:
             try:
                 self._pingable = self.bc("people", "pingable") or []
-            except RuntimeError as e:
+            except (RuntimeError, subprocess.SubprocessError) as e:  # a failed or timed-out read
                 self.log(f"reply: the people to @mention could not be read, @names stay text: {e}")
                 self._pingable = []
-        key = handle.casefold()
+        key = handle.casefold().replace("’", "'")
         hits = {}
         for p in self._pingable:
-            words = (p.get("name") or "").casefold().split()
+            words = (p.get("name") or "").casefold().replace("’", "'").split()
             if p.get("attachable_sgid") and words and (".".join(words) == key or ("." not in key and words[0] == key)):
                 hits[p.get("id")] = p
         if len(hits) != 1:
@@ -3411,7 +3411,7 @@ def render_reply(text, mention=None):
 
 # An @name: "@Fitz" or "@Caleb.LeNoir", also inside *, _ or ~ emphasis, not the @ of an email address (snake_case@x,
 # a_@x) or inside a path; a handle never ends in _ or -, so "_@Fitz_" is Fitz in italics.
-NAME = r"[^\W\d_](?:[\w-]*[^\W_])?"
+NAME = r"[^\W\d_](?:[\w'’-]*[^\W_])?"  # apostrophes inside, as in O'Connor
 MENTION = re.compile(rf"(?<![^\W_])(?<![.@/+-])(?<![^\W_]_)(?<![^\W_]__)@({NAME}(?:\.{NAME})*)")
 
 
@@ -3431,10 +3431,14 @@ def md_inline(text, mention=None):
             return html.escape(part)
         out, pos = [], 0
         for m in MENTION.finditer(part):
-            tag = mention(m.group(1))
+            handle = m.group(1)
+            tag = mention(handle)
+            while not tag and re.search(r"[^\W_]['’]", handle):  # "@Fitz's": try the name before the apostrophe
+                handle = re.sub(r"['’][^'’]*$", "", handle)
+                tag = mention(handle)
             if tag:
                 out += [html.escape(part[pos:m.start()]), keep(tag)]
-                pos = m.end()
+                pos = m.start() + 1 + len(handle)
         return "".join(out) + html.escape(part[pos:])
     text = re.sub(r"`([^`]+)`", lambda m: keep(html.escape(m.group(1))), text)
     out, pos = [], 0
