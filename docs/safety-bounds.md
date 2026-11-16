@@ -82,7 +82,15 @@
   once, and gets the acting user's 👀. Lines from anyone else, the acting user included,
   are never captured. `sync.py reply --recording <line id>` answers it with a new line in
   that chat as the acting user and then removes the 👀, under the same `--again` and
-  failure rules as a card reply. A chat configured as `{"chat": <id>, "every_line": true}`
+  failure rules as a card reply. In that line, and in a reply in a Ping, each
+  `@First.Last` (the person's whole name, its spaces as dots) or `@First` (a first name or
+  one-word name) becomes a Basecamp mention when it names exactly one person the acting
+  user can @mention (`basecamp people pingable`, read once a run and only when the reply
+  has an @name). An @name that matches no one or more than one person, or comes when that
+  read fails, stays plain text and is logged; an @ in code, a link or an email address is
+  never touched. A reply on a to-do, message or followed thread goes through `basecamp
+  comments create`, which resolves @names itself; a reply on a card comment posts the
+  rendered text unchanged. A chat configured as `{"chat": <id>, "every_line": true}`
   relays every line the owner posts there, not only mention or `?` lines; each goes
   through the same record, cursor and 👀 rules.
 - Chat watches: `sync.py watch --home <home> --config <config.json> --chat <chat URL>

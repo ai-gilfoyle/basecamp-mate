@@ -173,6 +173,17 @@ class Reply(PingBase):
         self.assertTrue(any(d.startswith(f"/buckets/{CIRCLE}/boosts/") for d in self.stub.deletes()))
         self.assertEqual(self.state()["pings"][str(CHAT)]["replied"], [2])
 
+    def test_reply_turns_at_names_into_mentions(self):
+        self.stub.pingable = [{"id": CAPTAIN, "name": "Caleb LeNoir", "attachable_sgid": "sg-caleb"}]
+        self.assertTrue(self.sync().reply(2, "@Caleb.LeNoir done."))
+        self.assertEqual(self.stub.chat_posts(), [(str(CHAT), '<div><bc-attachment sgid="sg-caleb" '
+                                                   'content-type="application/vnd.basecamp.mention"></bc-attachment> done.</div>')])
+
+    def test_reply_keeps_at_names_as_text_when_people_cannot_be_read(self):
+        self.stub.pingable = None
+        self.assertTrue(self.sync().reply(2, "@Caleb.LeNoir done."))
+        self.assertEqual(self.stub.chat_posts(), [(str(CHAT), "<div>@Caleb.LeNoir done.</div>")])
+
     def test_second_reply_needs_again(self):
         self.sync().reply(2, "x")
         self.assertFalse(self.sync().reply(2, "y"))

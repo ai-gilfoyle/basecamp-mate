@@ -164,6 +164,7 @@ class Tools:
         self.dry, self.run = dry, runner
         self._acting = False  # acting person id once resolved; None when it can't be
         self._acting_sgid = None  # the acting person's mention sgid, to spot @mentions in chat
+        self._pingable = None  # the people the acting login can @mention, read once a run when a reply first needs them
         self._received = False  # this run's read of the acting person's received boosts, by id; None when it failed
         self._creators = {}  # (bucket, recording id) -> its creator's id, refetched once a run to tell the agent's own
         self.errors = 0  # failed basecamp calls this run, so a caller can tell whether a reader it ran fully worked
@@ -2256,7 +2257,7 @@ class Tools:
         if self.dry:
             self.log(f"dry reply {rid}: {self.reply_plan(rid, f'post in {where}', boost)}, then remove {EYES}")
             return False
-        payload = {"content": render_reply(text or "")}
+        payload = {"content": render_reply(text or "", self.mention_tag if chat is not None else None)}
         if chat is not None:
             payload["content_type"] = "text/html"
         answer = self.reply_send(rid, f"in {where}", boost, bucket,
@@ -2280,7 +2281,7 @@ class Tools:
             return False
         answer = self.reply_send(rid, f"in ping {chat}", boost, bucket, lambda: self.bc(
             "api", "post", f"/buckets/{bucket}/chats/{chat}/lines.json",
-            "-d", json.dumps({"content": render_reply(text), "content_type": "text/html"})))
+            "-d", json.dumps({"content": render_reply(text, self.mention_tag), "content_type": "text/html"})))
         state = self.load("pings.json", {})
         state["pings"][chat].setdefault("replied", []).append(rid)
         self.save_json("pings.json", state)
@@ -2474,6 +2475,31 @@ class Tools:
                     self.remove_eyes(a[0], rec.get("bucket"))
                 except RuntimeError as e:
                     self.log(f"todo {key}: removing the read acknowledgement from {a[0]} failed: {e}")
+
+    def mention_tag(self, handle):
+        """The mention attachment for `@handle` in a chat or Ping line, or None to leave it as text.
+
+        `handle` is "First.Last" (the person's whole name, its spaces as dots) or one word (their first name, or a
+        one-word name), matched without regard to case against the people the acting login can @mention (`people
+        pingable`, read once a run). A handle that matches no one, or more than one person, is logged and left as text;
+        so is every handle when that read fails."""
+        if self._pingable is None:
+            try:
+                self._pingable = self.bc("people", "pingable") or []
+            except RuntimeError as e:
+                self.log(f"reply: the people to @mention could not be read, @names stay text: {e}")
+                self._pingable = []
+        key = handle.casefold()
+        hits = {}
+        for p in self._pingable:
+            words = (p.get("name") or "").casefold().split()
+            if p.get("attachable_sgid") and words and (".".join(words) == key or ("." not in key and words[0] == key)):
+                hits[p.get("id")] = p
+        if len(hits) != 1:
+            self.log(f"reply: @{handle} matches {len(hits)} people, left as text")
+            return None
+        sgid = next(iter(hits.values()))["attachable_sgid"]
+        return f'<bc-attachment sgid="{html.escape(sgid)}" content-type="application/vnd.basecamp.mention"></bc-attachment>'
 
     def owner_mention(self):
         """The owner's mention attachment, from their person record's sgid."""
@@ -3322,12 +3348,14 @@ def is_due(q, now):
     return (now.hour, now.minute) >= (int(sch.get("hour", 0)), int(sch.get("minute", 0)))
 
 
-def render_reply(text):
+def render_reply(text, mention=None):
     """Markdown to Basecamp rich text: escaped, one <div> per paragraph, no raw newlines.
 
     Handles **bold**, *italic*, `code` (shown plain), links, bullet and numbered lists,
     headings (bold), > quotes and ``` fenced blocks, using only tags Basecamp keeps.
-    Plain text renders as before; no HTML in the text passes through.
+    Plain text renders as before; no HTML in the text passes through. With `mention`
+    (see md_inline), an @name outside code, links and email addresses becomes the
+    attachment it returns.
     """
     out, para, items, kind = [], [], [], None
     lines = text.strip().replace("\r\n", "\n").split("\n")
@@ -3360,7 +3388,7 @@ def render_reply(text):
             if para or kind != want:
                 flush()
             kind = want
-            items.append(md_inline(m.group(2)))
+            items.append(md_inline(m.group(2), mention))
             continue
         if not line:
             flush()
@@ -3371,31 +3399,49 @@ def render_reply(text):
         q = re.match(r">\s?(.*)", line)
         if h:
             flush()
-            out.append(f"<div><strong>{md_inline(h.group(1))}</strong></div>")
+            out.append(f"<div><strong>{md_inline(h.group(1), mention)}</strong></div>")
         elif q:
             flush()
-            out.append(f"<blockquote>{md_inline(q.group(1))}</blockquote>")
+            out.append(f"<blockquote>{md_inline(q.group(1), mention)}</blockquote>")
         else:
-            para.append(md_inline(line))
+            para.append(md_inline(line, mention))
     flush()
     return "".join(out)
 
 
-def md_inline(text):
-    """One line of Markdown to escaped HTML: `code` kept literal, links, **bold**, *italic*, ~~strike~~."""
+# An @name: "@Fitz" or "@Caleb.LeNoir", not the @ of an email address or inside a path.
+MENTION = re.compile(r"(?<![\w.@/+-])@([^\W\d_][\w-]*(?:\.[^\W\d_][\w-]*)*)")
+
+
+def md_inline(text, mention=None):
+    """One line of Markdown to escaped HTML: `code` kept literal, links, **bold**, *italic*, ~~strike~~.
+
+    With `mention` (a function from an @name's handle, such as "Caleb.LeNoir", to its attachment HTML, or None), each
+    @name in plain text, never in code or a link, becomes the attachment it returns; one it returns None for stays text."""
     codes = []
 
-    def code(m):
-        codes.append(html.escape(m.group(1)))
+    def keep(markup):
+        codes.append(markup)
         return f"\0{len(codes) - 1}\0"
-    text = re.sub(r"`([^`]+)`", code, text)
+
+    def plain(part):
+        if mention is None:
+            return html.escape(part)
+        out, pos = [], 0
+        for m in MENTION.finditer(part):
+            tag = mention(m.group(1))
+            if tag:
+                out += [html.escape(part[pos:m.start()]), keep(tag)]
+                pos = m.end()
+        return "".join(out) + html.escape(part[pos:])
+    text = re.sub(r"`([^`]+)`", lambda m: keep(html.escape(m.group(1))), text)
     out, pos = [], 0
     for m in re.finditer(r"\[([^\]]+)\]\((https?://[^)\s]+)\)|(https?://[^\s<>()]+)", text):
-        out.append(html.escape(text[pos:m.start()]))
+        out.append(plain(text[pos:m.start()]))
         url = m.group(2) or m.group(3)
         out.append(f'<a href="{html.escape(url)}">{html.escape(m.group(1) or url)}</a>')
         pos = m.end()
-    out.append(html.escape(text[pos:]))
+    out.append(plain(text[pos:]))
     s = "".join(out)
     s = re.sub(r"(\*\*|__)(?=\S)(.+?)(?<=\S)\1", r"<strong>\2</strong>", s)
     s = re.sub(r"(?<![\w*])\*(?=\S)(.+?)(?<=\S)\*(?![\w*])", r"<em>\1</em>", s)

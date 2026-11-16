@@ -24,6 +24,7 @@ class Stub:
         self.lavish, self.lavish_calls = "", 0  # stdout of plain `lavish-axi`, or an exception to raise
         self.readings, self.my_boosts = {"unreads": [], "reads": []}, []  # /my/readings.json, /my/boosts.json
         self.marked = []  # the ids of each `notifications read` call
+        self.pingable = []  # `people pingable`: the people the acting login can @mention; None makes the read fail
 
     def __call__(self, cmd, **kw):
         if cmd[0] == "lavish-axi":
@@ -50,6 +51,10 @@ class Stub:
             data = self.readings
         elif args[:3] == ["api", "get", "/my/boosts.json"]:
             data = self.my_boosts
+        elif args[:2] == ["people", "pingable"]:
+            if self.pingable is None:
+                return SimpleNamespace(stdout=json.dumps({"ok": False, "error": "boom"}), stderr="", returncode=1)
+            data = self.pingable
         elif args[:2] == ["notifications", "read"]:
             self.marked.append(args[2:])
         elif args[:3] == ["api", "get", "/my/profile.json"]:
@@ -773,6 +778,26 @@ class Chats(Base):
         self.sync().main([])
         self.assertEqual(len(self.pending()), 1)
 
+    def test_reply_turns_at_names_into_mentions(self):
+        self.stub.pingable = [{"id": 1, "name": "Caleb LeNoir", "attachable_sgid": "sg-caleb"},
+                              {"id": 2, "name": "Fitz", "attachable_sgid": "sg-fitz"},
+                              {"id": 3, "name": "Randy Johnson", "attachable_sgid": "sg-randy"},
+                              {"id": 4, "name": "Randy Smith", "attachable_sgid": "sg-randys"}]
+        self.stub.lines["77"].append(line(2))
+        self.sync().main([])
+        self.assertTrue(self.sync().reply(2, "@Caleb.LeNoir and @fitz: ask @Randy, @Nobody, a@b.io or `@Fitz`."))
+        tag = '<bc-attachment sgid="{}" content-type="application/vnd.basecamp.mention"></bc-attachment>'
+        self.assertEqual(self.stub.chat_posts(), [("77", f"<div>{tag.format('sg-caleb')} and {tag.format('sg-fitz')}: "
+                                                         "ask @Randy, @Nobody, a@b.io or @Fitz.</div>")])
+        self.assertEqual(sum(c[:2] == ["people", "pingable"] for c in self.stub.calls), 1)
+
+    def test_reply_without_at_names_reads_no_people(self):
+        self.stub.lines["77"].append(line(2))
+        self.sync().main([])
+        self.sync().reply(2, "Mail x@y.io.")
+        self.assertEqual(self.stub.chat_posts(), [("77", "<div>Mail x@y.io.</div>")])
+        self.assertNotIn(["people", "pingable"], [c[:2] for c in self.stub.calls])
+
     def test_chat_reply_failure_keeps_eyes(self):
         self.stub.lines["77"].append(line(2))
         self.sync().main([])
@@ -1121,6 +1146,15 @@ class RenderReply(unittest.TestCase):
                          "<div><strong>Today</strong></div><div>Did:</div><ul><li>one</li><li>two</li></ul>"
                          "<ol><li>first</li><li>second</li></ol><blockquote>quoted</blockquote>"
                          "<pre>x &lt; y<br>  z</pre><div>after</div>")
+
+    def test_mentions_outside_code_links_and_emails(self):
+        tags = {"Caleb.LeNoir": "<M1>", "Fitz": "<M2>"}
+        body = sync.render_reply("@Caleb.LeNoir, **@Fitz**'s turn.\n- see https://x.io/@Fitz and [@Fitz](https://x.io)\n"
+                                 "> me@Fitz.io `@Fitz`\n```\n@Fitz\n```", tags.get)
+        self.assertEqual(body, '<div><M1>, <strong><M2></strong>&#x27;s turn.</div><ul><li>see '
+                               '<a href="https://x.io/@Fitz">https://x.io/@Fitz</a> and <a href="https://x.io">@Fitz</a>'
+                               '</li></ul><blockquote>me@Fitz.io @Fitz</blockquote><pre>@Fitz</pre>')
+        self.assertEqual(sync.render_reply("@Fitz"), "<div>@Fitz</div>")
 
     def test_no_raw_html_or_newlines(self):
         body = sync.render_reply("<script>x</script>\n- <i>a</i>\n\n**<b>**")
