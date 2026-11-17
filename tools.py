@@ -165,6 +165,7 @@ class Tools:
         self._acting = False  # acting person id once resolved; None when it can't be
         self._acting_sgid = None  # the acting person's mention sgid, to spot @mentions in chat
         self._pingable = None  # the people the acting login can @mention, read once a run when a reply first needs them
+        self._bucket_people = {}  # project id -> the ids of its people, read once a run when a chat reply first needs them
         self._received = False  # this run's read of the acting person's received boosts, by id; None when it failed
         self._creators = {}  # (bucket, recording id) -> its creator's id, refetched once a run to tell the agent's own
         self.errors = 0  # failed basecamp calls this run, so a caller can tell whether a reader it ran fully worked
@@ -1350,8 +1351,8 @@ class Tools:
         its participants or as its creator (with "blocked" on, every Ping, so anyone else's
         line there gets the automatic reply); the bucket and chat ids come from its
         subscription_url. A Ping with two or more people besides the acting user (Basecamp
-        lists the others as its participants) is a group Ping ("group": true). Newest
-        activity first.
+        lists the others as its participants) is a group Ping ("group": true); "people" lists
+        those others' ids, the only people a reply there may @mention. Newest activity first.
         """
         data = self.readings() if data is None else data
         me = self.acting_id()
@@ -1367,7 +1368,7 @@ class Tools:
             others = {p.get("id") for p in people if p.get("id") is not None and p.get("id") != me}
             found.setdefault(m.group(2), {"bucket": m.group(1), "chat": m.group(2), "title": r.get("bucket_name"),
                                           "url": r.get("app_url"), "updated_at": r.get("updated_at") or "",
-                                          "group": len(others) >= 2})
+                                          "group": len(others) >= 2, "people": sorted(others)})
         return sorted(found.values(), key=lambda p: p["updated_at"], reverse=True)
 
     def read_pings(self, limit=10, convs=None):
@@ -1412,6 +1413,8 @@ class Tools:
             rec.update(bucket=int(bucket), title=p["title"], url=p["url"])
             if "group" in p:  # a conversation from the readings says; one built from a boost keeps what was known
                 rec["group"] = bool(p["group"])
+            if "people" in p:  # the others in it, the only people a reply there may @mention
+                rec["people"] = p["people"]
             cursor, me, before, held = rec.get("cursor", 0), self.acting_id(), None, Held(self)
             for ln in lines:
                 lid, prev, before = ln.get("id", 0), before, ln
@@ -2257,7 +2260,9 @@ class Tools:
         if self.dry:
             self.log(f"dry reply {rid}: {self.reply_plan(rid, f'post in {where}', boost)}, then remove {EYES}")
             return False
-        payload = {"content": render_reply(text or "", self.mention_tag if chat is not None else None)}
+        # A chat reply mentions only people on the chat's project; a card reply posts its @names unchanged.
+        mention = self.mentions(lambda: self.bucket_people(bucket or self.project)) if chat is not None else None
+        payload = {"content": render_reply(text or "", mention)}
         if chat is not None:
             payload["content_type"] = "text/html"
         answer = self.reply_send(rid, f"in {where}", boost, bucket,
@@ -2279,9 +2284,11 @@ class Tools:
         if self.dry:
             self.log(f"dry reply {rid}: {self.reply_plan(rid, f'post in ping {chat}', boost)}, then remove {EYES}")
             return False
+        # Only the Ping's own participants, as the reader last saw them; none when it has not recorded them.
+        mention = self.mentions(lambda: set(rec.get("people") or []))
         answer = self.reply_send(rid, f"in ping {chat}", boost, bucket, lambda: self.bc(
             "api", "post", f"/buckets/{bucket}/chats/{chat}/lines.json",
-            "-d", json.dumps({"content": render_reply(text, self.mention_tag), "content_type": "text/html"})))
+            "-d", json.dumps({"content": render_reply(text, mention), "content_type": "text/html"})))
         state = self.load("pings.json", {})
         state["pings"][chat].setdefault("replied", []).append(rid)
         self.save_json("pings.json", state)
@@ -2476,13 +2483,32 @@ class Tools:
                 except RuntimeError as e:
                     self.log(f"todo {key}: removing the read acknowledgement from {a[0]} failed: {e}")
 
-    def mention_tag(self, handle):
+    def mentions(self, allowed):
+        """The `mention` function render_reply takes: it mentions only the people `allowed()` returns (a set of ids,
+        such as the chat's project people), called only once the reply has an @name."""
+        return lambda handle: self.mention_tag(handle, allowed())
+
+    def bucket_people(self, bucket):
+        """The ids of everyone on project `bucket` (/projects/<id>/people.json), read once a run per project when a
+        reply first needs them; empty (no one to mention) when that read fails."""
+        key = str(bucket)
+        if key not in self._bucket_people:
+            try:
+                self._bucket_people[key] = {p.get("id") for p in self.bc("api", "get", f"/projects/{key}/people.json",
+                                                                         project=key) or []}
+            except (RuntimeError, subprocess.SubprocessError) as e:  # a failed or timed-out read
+                self.log(f"reply: project {key}'s people could not be read, @names stay text: {e}")
+                self._bucket_people[key] = set()
+        return self._bucket_people[key]
+
+    def mention_tag(self, handle, allowed):
         """The mention attachment for `@handle` in a chat or Ping line, or None to leave it as text.
 
         `handle` is "First.Last" (the person's whole name, its spaces as dots) or one word (their first name, or a
         one-word name), matched without regard to case against the people the acting login can @mention (`people
-        pingable`, read once a run). A handle that matches no one, or more than one person, is logged and left as text;
-        so is every handle when that read fails."""
+        pingable`, read once a run) who are also in `allowed` (the ids of the chat's project people or the Ping's
+        participants). A handle that matches no one, or more than one person, is logged and left as text; so is every
+        handle when that read fails."""
         if self._pingable is None:
             try:
                 self._pingable = self.bc("people", "pingable") or []
@@ -2492,6 +2518,8 @@ class Tools:
         key = handle.casefold().replace("’", "'")
         hits = {}
         for p in self._pingable:
+            if p.get("id") not in allowed:
+                continue
             words = (p.get("name") or "").casefold().replace("’", "'").split()
             if p.get("attachable_sgid") and words and (".".join(words) == key or ("." not in key and words[0] == key)):
                 hits[p.get("id")] = p
@@ -3354,10 +3382,10 @@ def render_reply(text, mention=None):
     Handles **bold**, *italic*, `code` (shown plain), links, bullet and numbered lists,
     headings (bold), > quotes and ``` fenced blocks, using only tags Basecamp keeps.
     Plain text renders as before; no HTML in the text passes through. With `mention`
-    (see md_inline), an @name outside code, links and email addresses becomes the
-    attachment it returns.
+    (see md_inline), an @name outside code, links, email addresses and quotes (> lines,
+    or text inside a <blockquote> written in the reply) becomes the attachment it returns.
     """
-    out, para, items, kind = [], [], [], None
+    out, para, items, kind, depth = [], [], [], None, 0
     lines = text.strip().replace("\r\n", "\n").split("\n")
 
     def flush():
@@ -3382,13 +3410,17 @@ def render_reply(text, mention=None):
             i += 1
             out.append("<pre>" + "<br>".join(block) + "</pre>")
             continue
+        # Quoted text never notifies anyone: no mention on a line in or touching an HTML <blockquote> written as text.
+        opens, closes = len(re.findall(r"<blockquote\b", line, re.I)), len(re.findall(r"</blockquote\s*>", line, re.I))
+        tag = None if depth or opens or closes else mention
+        depth = max(0, depth + opens - closes)
         m = re.match(r"([*+-]|\d+[.)])\s+(.*)", line)
         if m:
             want = "ul" if m.group(1) in "*+-" else "ol"
             if para or kind != want:
                 flush()
             kind = want
-            items.append(md_inline(m.group(2), mention))
+            items.append(md_inline(m.group(2), tag))
             continue
         if not line:
             flush()
@@ -3399,12 +3431,12 @@ def render_reply(text, mention=None):
         q = re.match(r">\s?(.*)", line)
         if h:
             flush()
-            out.append(f"<div><strong>{md_inline(h.group(1), mention)}</strong></div>")
+            out.append(f"<div><strong>{md_inline(h.group(1), tag)}</strong></div>")
         elif q:
             flush()
-            out.append(f"<blockquote>{md_inline(q.group(1), mention)}</blockquote>")
+            out.append(f"<blockquote>{md_inline(q.group(1))}</blockquote>")  # a > quote: no mentions
         else:
-            para.append(md_inline(line, mention))
+            para.append(md_inline(line, tag))
     flush()
     return "".join(out)
 

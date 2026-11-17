@@ -271,7 +271,8 @@ that read.
   characters or fewer, for example `--boost "Done ✅"`). Every `reply` takes either.
   To mention someone in a chat or Ping reply, write `@First.Last` (their whole name, spaces
   as dots) or `@First`; it becomes a real mention when it names exactly one person your
-  login can @mention, and stays plain text (logged) otherwise.
+  login can @mention who is on that chat's project or in that Ping, and stays plain text
+  (logged) otherwise. An @name in a quote never becomes a mention.
   If it asks for a decision or gives an instruction, relay it to the main firstmate first,
   like a comment.
   A `chat-question` from a chat set to `every_line` may be any line the owner wrote there;

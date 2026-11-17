@@ -185,10 +185,28 @@ class Reply(PingBase):
         self.assertEqual(self.stub.chat_posts(), [(str(CHAT), "<div>@Caleb.LeNoir done.</div>")])
 
     def test_reply_matches_names_with_apostrophes(self):
-        self.stub.pingable = [{"id": 5, "name": "Sean O’Connor", "attachable_sgid": "sg-sean"}]
+        self.stub.pingable = [{"id": CAPTAIN, "name": "Sean O’Connor", "attachable_sgid": "sg-sean"}]
         self.assertTrue(self.sync().reply(2, "@Sean.O'Connor done."))
         self.assertEqual(self.stub.chat_posts(), [(str(CHAT), '<div><bc-attachment sgid="sg-sean" '
                                                    'content-type="application/vnd.basecamp.mention"></bc-attachment> done.</div>')])
+
+    def test_reply_never_mentions_someone_outside_the_ping(self):
+        self.stub.pingable = [{"id": CAPTAIN, "name": "Caleb LeNoir", "attachable_sgid": "sg-caleb"},
+                              {"id": 9, "name": "Randy Outsider", "attachable_sgid": "sg-randy"}]
+        self.assertEqual(self.state()["pings"][str(CHAT)]["people"], [CAPTAIN])
+        self.assertTrue(self.sync().reply(2, "@Caleb, ask @Randy."))
+        self.assertEqual(self.stub.chat_posts(), [(str(CHAT), '<div><bc-attachment sgid="sg-caleb" '
+                                                   'content-type="application/vnd.basecamp.mention"></bc-attachment>, '
+                                                   'ask @Randy.</div>')])
+        self.assertFalse(any(c[:2] == ["api", "get"] and c[2].endswith("/people.json") for c in self.stub.calls))
+
+    def test_reply_keeps_at_names_as_text_when_the_pings_people_are_unknown(self):
+        state = self.state()
+        del state["pings"][str(CHAT)]["people"]  # recorded before the reader kept them
+        json.dump(state, open(os.path.join(self.cfgdir, "pings.json"), "w"))
+        self.stub.pingable = [{"id": CAPTAIN, "name": "Caleb LeNoir", "attachable_sgid": "sg-caleb"}]
+        self.assertTrue(self.sync().reply(2, "@Caleb done."))
+        self.assertEqual(self.stub.chat_posts(), [(str(CHAT), "<div>@Caleb done.</div>")])
 
     def test_reply_keeps_at_names_as_text_when_the_people_read_times_out(self):
         self.stub.pingable = subprocess.TimeoutExpired(["basecamp"], 120)

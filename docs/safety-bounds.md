@@ -85,10 +85,13 @@
   failure rules as a card reply. In that line, and in a reply in a Ping, each
   `@First.Last` (the person's whole name, its spaces as dots) or `@First` (a first name or
   one-word name) becomes a Basecamp mention when it names exactly one person the acting
-  user can @mention (`basecamp people pingable`, read once a run and only when the reply
-  has an @name). An @name that matches no one or more than one person, or comes when that
-  read fails, stays plain text and is logged; an @ in code, a link or an email address is
-  never touched. A reply on a to-do, message or followed thread goes through `basecamp
+  user can @mention (`basecamp people pingable`) who is also on that chat's project
+  (`/projects/<id>/people.json`) or, in a Ping, one of its participants as the Ping reader
+  last saw them (`pings.json` keeps them as `people`). Each read is made once a run and
+  only when the reply has an @name. An @name that matches no one or more than one person,
+  or comes when a read fails or the Ping's people are not known, stays plain text and is
+  logged; an @ in code, a link, an email address or a quote (a `>` line, or text inside a
+  `<blockquote>` written in the reply) is never touched. A reply on a to-do, message or followed thread goes through `basecamp
   comments create`, which resolves @names itself; a reply on a card comment posts the
   rendered text unchanged. A chat configured as `{"chat": <id>, "every_line": true}`
   relays every line the owner posts there, not only mention or `?` lines; each goes
