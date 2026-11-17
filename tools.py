@@ -311,7 +311,13 @@ class Tools:
         comments = self.bc("comments", "list", str(recording), "--all", project=project) or []
         if newest is None:
             return comments
-        comments = sorted(comments, key=lambda c: (c.get("created_at") or "", c.get("id") or 0))
+        def made(c):
+            try:
+                at = datetime.fromisoformat(str(c.get("created_at")).replace("Z", "+00:00"))
+            except ValueError:
+                at = datetime.min
+            return (at if at.tzinfo else at.replace(tzinfo=timezone.utc), c.get("id") or 0)
+        comments = sorted(comments, key=made)
         return comments[max(len(comments) - newest, 0):]
 
     def gh(self, *args):

@@ -324,6 +324,16 @@ class CommentReads(ToolBase):
         self.assertEqual(len(self.sync().comments(42, newest=500)), 150)
         self.assertEqual(self.sync().comments(42, newest=0), [])
 
+    def test_a_limited_read_compares_fractional_seconds_as_time(self):
+        self.stub.comments["42"] = [dict(comment(2), created_at="2026-11-17T12:00:00.250Z"),
+                                    dict(comment(1), created_at="2026-11-17T12:00:00Z"),
+                                    dict(comment(3), created_at="2026-11-17T06:00:00.5-06:00")]
+        self.assertEqual([c["id"] for c in self.sync().comments(42, newest=1)], [3])
+        self.assertEqual([c["id"] for c in self.sync().comments(42, newest=2)], [2, 3])
+        self.stub.comments["42"] = [dict(comment(9), created_at="2026-11-17T12:00:00Z"),
+                                    dict(comment(8), created_at="2026-11-17T12:00:00Z")]
+        self.assertEqual([c["id"] for c in self.sync().comments(42, newest=1)], [9])
+
     def test_tracking_a_long_todo_starts_after_its_newest_comment(self):
         self.stub.comments["42"] = self.long_thread(105)
         self.assertTrue(self.sync().todo_track("old", 42))
