@@ -388,11 +388,13 @@ class InitTest(unittest.TestCase):
         listener = init_home.unit_name(self.home) + "-listen"
         self.init().main()
         path = os.path.join(self.dir, "config.json")
-        json.dump(EXPECTED | {"listen": {"interval": 30}}, open(path, "w"))  # written by an earlier version
+        old = {k: v for k, v in EXPECTED.items() if k != "agent"}  # written by an earlier version: no "agent" either
+        json.dump(old | {"listen": {"interval": 30}}, open(path, "w"))
         self.system.units[listener] = "[Service]\nExecStart=... sync.py listen ..."
         plan = self.init(dry=True).main()
         self.assertIn(f"remove {listener}.service", plan)
         self.assertIn(f'drop the retired "listen" from {path} (notifications replaced the event listener)', plan)
+        self.assertIn(f"record the agent {ACTING} in {path}", plan)
         self.assertIn(listener, self.system.units)  # a dry run removes nothing
         done = self.init().main()
         self.assertIn(f"remove {listener}.service", done)

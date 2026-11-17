@@ -80,7 +80,7 @@ class TimesheetBase(Base):
     def setUp(self):
         super().setUp()
         self.stub = TimesheetStub()
-        self.cfg(profile="firstmate", timezone="America/New_York", timesheet={})
+        self.cfg(profile="firstmate", agent=ACTING, timezone="America/New_York", timesheet={})
         self.work = os.path.join(self.tmp, "transcripts")
         os.makedirs(self.work)
 

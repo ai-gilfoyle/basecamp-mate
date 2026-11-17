@@ -48,24 +48,23 @@ run beside another home's live run on the same thing with the same login;
 A sign-in can be given to the wrong person: after a login outage, someone approves
 `basecamp auth login -P <profile>` in a browser signed in as themselves. Before anything
 else, each timer run reads `/my/profile.json` and compares its id with the config's `agent`
-(see [Config and state](config.md)). If the profile signs in as anyone else, the run does
-nothing more: it reads no notifications, Pings or threads, boosts nothing, marks nothing
-read, writes no record, inbox note, state file or run claim, and exits 1. It logs one line
-that names both people and the command to sign in again:
+(see [Config and state](config.md)), and reads it again once it holds the state lock. If
+the profile signs in as anyone else, the run does nothing more: it reads no notifications,
+Pings or threads, boosts nothing, marks nothing read, writes no record, inbox note, state
+file or run claim, and exits 1. It logs a line that names both people and the command to
+sign in again:
 
 ```
 FAILED wrong login: the sign-in firstmate is Jay Park (50519852), not the agent (52942343), so nothing ran and no state changed; sign in as the agent: BASECAMP_NO_KEYRING=1 basecamp auth login -P firstmate --device-code
 ```
 
 A run that cannot read `/my/profile.json` at all is skipped the same way, with a
-`FAILED login check` line. A line is logged again only when it is an hour old or another
-line came after it in `sync.log`, so the wake check fires once, not every 30 seconds, and
-`basecamp-mate doctor` names the fix. When the right person signs in again, the next run carries on from the state the last
-good run left. The commands that post (`reply`, `dismiss`, `ask`, `answer`, `todo
-create|comment|complete|subtask`, `decide` and `post-message`) make the same check and post
-nothing as anyone but the agent. Without `agent` in the config, the first agent id the
-relay ledger wrote for the profile is used, so a home set up before `init` recorded it is
-checked too. With neither, nothing is checked.
+`FAILED login check` line. A config with `profile` but no `agent` is skipped too, with a
+`FAILED login check` line that says to add `agent`, or to re-run `init` signed in as the
+agent, which records it without `--force` (for a home with a relay ledger, only when the
+login is the agent the ledger names). When the right person signs in again, the next run
+carries on from the state the last good run left. `backup`, `timesheet post` and `watch`
+make the same check. Without `profile`, nothing is checked.
 
 ## A dedicated Basecamp user
 

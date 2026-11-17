@@ -69,22 +69,6 @@ class BasecampError(RuntimeError):
         self.code, self.error = code, error or ""
 
 
-def ledger_agent(path, profile):
-    """The first agent id the relay ledger at `path` wrote for `profile`, or None."""
-    try:
-        with open(path) as f:
-            for line in f:
-                try:
-                    agent = json.loads(line).get("agent") or {}
-                except (ValueError, AttributeError):
-                    continue
-                if agent.get("profile") == profile and isinstance(agent.get("id"), int) and not isinstance(agent["id"], bool):
-                    return agent["id"]
-    except OSError:
-        pass
-    return None
-
-
 class Tools:
     def __init__(self, home, config_path, dry=False, runner=subprocess.run):
         self.home = os.path.abspath(home)
@@ -396,57 +380,34 @@ class Tools:
                     self._acting = "retry"
         return self._acting
 
-    def expected_agent(self):
-        """The person id the profile must sign in as: the config's "agent", else, for a home set up before init recorded
-        it, the first agent id the relay ledger wrote for this profile (the ledger began after the login was checked by
-        hand); None when neither names one, and the login is not checked."""
-        if self.agent_id is not None or not self.profile:
-            return self.agent_id
-        return ledger_agent(self.path(RELAY), self.profile)
-
     def wrong_login(self):
-        """Why nothing may run as this login, or None: the profile signs in as someone other than the agent (or who it
-        signs in as could not be read). Reads only /my/profile.json, once a run; writes nothing."""
-        want = self.expected_agent()
-        if not self.profile or want is None:
+        """Why nothing may run as this login, or None: the config names no "agent", the profile signs in as someone other
+        than the agent, or who it signs in as could not be read. Reads /my/profile.json afresh on each call; writes
+        nothing. Without a profile there is no agent login to check."""
+        if not self.profile:
             return None
+        if self.agent_id is None:
+            return (f'login check: the config has no "agent", so nothing ran; add "agent": <the agent\'s Basecamp person '
+                    f'id> to {self.config_path}, or re-run init signed in as the agent to record it')
+        self._acting = False
         me = self.acting_id()
         relogin = f"sign in as the agent: BASECAMP_NO_KEYRING=1 basecamp auth login -P {self.profile} --device-code"
         if me == "retry":
             return (f"login check: could not read who the sign-in {self.profile} is (/my/profile.json), so nothing ran; "
                     f"if it keeps failing, {relogin}")
-        if me != want:
+        if me != self.agent_id:
             who = f"{self._acting_name} ({me})" if self._acting_name else str(me)
-            return (f"wrong login: the sign-in {self.profile} is {who}, not the agent ({want}), so nothing ran and no "
-                    f"state changed; {relogin}")
+            return (f"wrong login: the sign-in {self.profile} is {who}, not the agent ({self.agent_id}), so nothing ran "
+                    f"and no state changed; {relogin}")
         return None
 
-    def log_hourly(self, msg):
-        """Log `msg` unless sync.log already ends with it from within the last hour: a refused run repeats it every 30
-        seconds, and each new FAILED line wakes the agent. Writes only sync.log."""
-        try:
-            with open(self.path("sync.log"), "rb") as f:
-                f.seek(max(0, os.path.getsize(self.path("sync.log")) - 4096))
-                last = (f.read().decode("utf-8", "replace").strip().splitlines() or [""])[-1]
-            at = datetime.strptime(last[:20], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-            if last[21:] == msg and (datetime.now(timezone.utc) - at).total_seconds() < 3600:
-                return
-        except (OSError, ValueError):
-            pass
-        self.log(msg)
-
     def refused(self, what, who="captain"):
-        """True (logged) when a command must not post: no profile, the profile is the owner, or it is not the agent."""
+        """True (logged) when a command must not post: no profile, or the profile is the owner."""
         me = self.acting_id()
         if me == "retry":
             raise RuntimeError("acting identity unknown")
         if me is None or me == self.captain:
             self.log(f"{what}: acting user is the {who} or unset, not posting")
-            return True
-        want = self.expected_agent()
-        if want is not None and me != want:
-            self.log(f"{what}: the sign-in {self.profile} is {self._acting_name or me} ({me}), not the agent ({want}), "
-                     "not posting")
             return True
         return False
 

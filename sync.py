@@ -44,10 +44,11 @@ Deterministic, no model calls. Safety bounds, enforced here:
     session is down and inbox notes wait (once per outage), and, with "timesheet", one
     timesheet entry per piece of work per finished day (timesheet.json keeps each one posted);
   - only the explicit commands post, run by the agent, and each refuses to when no
-    profile is set or the profile signs in as the owner or as anyone but the agent;
-  - a timer run signed in as anyone but the agent ("agent" in the config, which init
-    records) does nothing: it reads only /my/profile.json, writes no state and logs one
-    FAILED line naming both people (hourly while it lasts);
+    profile is set or the profile signs in as the owner;
+  - with a profile, a timer run, `backup`, `timesheet post` and `watch` do nothing unless
+    the profile signs in as the agent ("agent" in the config, which init records): they
+    read only /my/profile.json, before and again inside the state lock, write no state
+    and log one FAILED line; a config without "agent" is refused the same way;
   - id maps (map.json, todos.json, ...) make re-runs update or skip instead of
     duplicating.
 All runtime state lives in the directory that holds the config file, except each config's
@@ -263,10 +264,24 @@ def read(path):
         return f.read()
 
 
-def command(a, what, call, runner):
+def refused_login(s):
+    """True (FAILED line logged, or printed on a dry run) when nothing may run as this login (Tools.wrong_login)."""
+    wrong = s.wrong_login()
+    if wrong:
+        (print if s.dry else s.log)(f"FAILED {wrong}")
+    return bool(wrong)
+
+
+def command(a, what, call, runner, guard=False):
+    """Run `call` under the state lock; with `guard`, only when the login is the agent, checked before the lock and
+    again once it is held."""
     s = Sync(a.home, a.config, dry=getattr(a, "dry_run", False), runner=runner)
     try:
+        if guard and refused_login(s):
+            return 1
         with s.locked("sync"):
+            if guard and refused_login(s):
+                return 1
             call(s)
     except Exception as e:
         s.log(f"FAILED {what} {type(e).__name__}: {e}")
@@ -369,7 +384,7 @@ def timesheet_cli(argv, runner):
     calls = {"start": lambda s: s.timesheet_start(a.key, a.on, a.workdir),
              "stop": lambda s: s.timesheet_stop(a.key),
              "post": lambda s: s.behaviors["timesheet"].run()}
-    return command(a, f"timesheet {sub}", calls[sub], runner)
+    return command(a, f"timesheet {sub}", calls[sub], runner, guard=sub == "post")
 
 
 def cli(argv=None, runner=subprocess.run):
@@ -443,7 +458,7 @@ def cli(argv=None, runner=subprocess.run):
         ap.add_argument("--dry-run", action="store_true")
         a = ap.parse_args(argv[1:])
         return command(a, what, lambda s: s.watch(a.chat, a.after_line, a.until) if what == "watch"
-                       else s.unwatch(a.chat), runner)
+                       else s.unwatch(a.chat), runner, guard=what == "watch")
     if argv[:1] in (["ask"], ["answer"]):
         what = argv[0]
         ap = common(f"sync.py {what}", "Post a new line in the configured ask_chat, @mentioning the owner." if what == "ask"
@@ -506,7 +521,7 @@ def cli(argv=None, runner=subprocess.run):
             print('sync.py backup: no "backup" in the config: add {"project": <bucket id>, "vault": <Docs & Files folder id>}',
                   file=sys.stderr)
             return 2
-        return command(a, "backup", lambda s: s.behaviors["backup"].run(), runner)
+        return command(a, "backup", lambda s: s.behaviors["backup"].run(), runner, guard=True)
     if argv[:1] == ["listen"]:
         ap = common("sync.py listen", "Retired: notifications on the timer replaced the event listener; logs that and exits.")
         ap.add_argument("--once", action="store_true", help=argparse.SUPPRESS)
@@ -550,12 +565,10 @@ def cli(argv=None, runner=subprocess.run):
     try:
         # Signed in as anyone but the agent, the run does nothing at all: no reads that move a cursor, no boosts, no
         # marking read, no records, no state files (a run once read another person's notifications and Pings this way).
-        wrong = s.wrong_login()
-        if wrong:
-            (print if s.dry else s.log_hourly)(f"FAILED {wrong}")
+        if refused_login(s):
             return 1
         with s.locked("sync"):
-            if not s.claim(allow=a.allow_duplicate):
+            if refused_login(s) or not s.claim(allow=a.allow_duplicate):
                 return 1
             s.main(due=not a.all)
     except Exception as e:

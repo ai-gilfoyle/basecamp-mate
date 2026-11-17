@@ -1,6 +1,6 @@
-"""Tests for the login guard: a timer run signed in as anyone but the agent ("agent" in the config, else the first agent
-id in the relay ledger) reads only /my/profile.json, writes no state and logs one FAILED line naming both people; the
-commands refuse to post; init records the agent and refuses a re-run signed in as someone else.
+"""Tests for the login guard: a timer run, backup, timesheet post or watch signed in as anyone but the agent ("agent" in
+the config), or with no "agent", reads only /my/profile.json, writes no state and logs a FAILED line; init records the
+agent and refuses a re-run signed in as someone else.
 
 The basecamp CLI is stubbed; nothing touches the network.
 """
@@ -11,17 +11,18 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_sync import ACTING, line  # noqa: E402
 from test_tools import TodoStub, ToolBase  # noqa: E402
 import test_init  # noqa: E402
-import doctor, init_home, sync  # noqa: E402
+import init_home, sync  # noqa: E402
 
 OTHER = 50519852  # an operator, signed in by mistake
 
 
 class GuardStub(TodoStub):
-    """Adds the acting person's name to /my/profile.json, and a failing profile read on demand."""
+    """Adds the acting person's name to /my/profile.json, a failing profile read on demand, and a sign-in that changes to
+    `then` after the next profile read."""
 
     def __init__(self):
         super().__init__()
-        self.profile_fails = False
+        self.profile_fails, self.then = False, None
 
     def __call__(self, cmd, **kw):
         out = super().__call__(cmd, **kw)
@@ -30,6 +31,8 @@ class GuardStub(TodoStub):
                 return type(out)(stdout=json.dumps({"ok": False, "error": "Not authenticated"}), stderr="", returncode=1)
             data = json.loads(out.stdout)
             data["data"]["name"] = {ACTING: "Gilfoyle AI", OTHER: "Jay Park"}.get(self.me)
+            if self.then is not None:
+                self.me, self.then = self.then, None
             return type(out)(stdout=json.dumps(data), stderr="", returncode=0)
         return out
 
@@ -38,12 +41,12 @@ class Base(ToolBase):
     def setUp(self):
         super().setUp()
         self.stub = GuardStub()
-        self.cfg(cards=False, chats=[77], agent=ACTING)
+        self.cfg(cards=False, chats=[77])
         self.stub.lines = {"77": [line(1)]}
 
     def run_timer(self, *extra):
         with redirect_stdout(io.StringIO()):
-            return sync.cli(["--home", self.home, "--config", os.path.join(self.cfgdir, "config.json"), *extra],
+            return sync.cli([*extra, "--home", self.home, "--config", os.path.join(self.cfgdir, "config.json")],
                             runner=self.stub)
 
     def snapshot(self):
@@ -90,15 +93,19 @@ class TimerRun(Base):
         self.assertEqual(sorted(os.listdir(self.cfgdir)), ["config.json", "sync.log"])
         self.assertFalse(os.path.exists(os.environ["BASECAMP_MATE_RUNS"]))
 
-    def test_the_failed_line_is_logged_once_an_hour_while_it_lasts(self):
+    def test_a_sign_in_that_changes_while_the_run_waits_for_the_lock_writes_nothing(self):
+        self.stub.then = OTHER
+        self.assertEqual(self.run_timer(), 1)
+        self.assertEqual(self.stub.calls, [["api", "get", "/my/profile.json"]] * 2)
+        self.assertEqual(sorted(os.listdir(self.cfgdir)), ["config.json", "sync.lock", "sync.log"])
+        self.assertFalse(os.path.exists(os.environ["BASECAMP_MATE_RUNS"]))
+        [failed] = self.failed()
+        self.assertIn(f"wrong login: the sign-in agent is Jay Park ({OTHER})", failed)
+
+    def test_each_refused_run_logs_its_line(self):
         self.stub.me = OTHER
-        for _ in range(3):
+        for _ in range(2):
             self.run_timer()
-        self.assertEqual(len(self.failed()), 1)
-        p = os.path.join(self.cfgdir, "sync.log")
-        old = open(p).read().replace(self.log()[:4], "2000", 1)  # the line's year: long ago
-        open(p, "w").write(old)
-        self.run_timer()
         self.assertEqual(len(self.failed()), 2)
 
     def test_an_unreadable_profile_skips_the_run(self):
@@ -119,53 +126,47 @@ class TimerRun(Base):
         self.assertEqual(sorted(os.listdir(self.cfgdir)), ["config.json"])
 
 
-class LedgerFallback(Base):
-    """A home set up before init recorded "agent" takes the first agent id its relay ledger wrote for the profile."""
+class NoAgent(Base):
+    """With a profile but no "agent" in the config, nothing runs, whoever is signed in, and nothing is learned."""
 
     def setUp(self):
         super().setUp()
         self.cfg(drop=("agent",))
 
-    def ledger(self, *ids, profile="agent"):
+    def test_nothing_runs_and_the_line_says_what_to_configure(self):
         with open(os.path.join(self.cfgdir, "relay.jsonl"), "w") as f:
-            f.write("not json\n")
-            for i in ids:
-                f.write(json.dumps({"event": "relayed", "agent": {"home": self.home, "profile": profile, "id": i}}) + "\n")
-
-    def test_the_first_ledger_id_is_the_agent(self):
-        self.ledger(ACTING, OTHER)
-        self.stub.me = OTHER
+            f.write(json.dumps({"event": "relayed", "agent": {"home": self.home, "profile": "agent", "id": ACTING}}) + "\n")
+        before = self.snapshot()
         self.assertEqual(self.run_timer(), 1)
-        self.assertIn(f"not the agent ({ACTING})", self.failed()[0])
+        self.assertEqual(self.stub.calls, [])
+        self.assertEqual(self.snapshot(), before)
+        [failed] = self.failed()
+        self.assertIn('login check: the config has no "agent", so nothing ran; add "agent"', failed)
+        self.assertNotIn("agent", json.load(open(os.path.join(self.cfgdir, "config.json"))))
+
+
+class FeedCommands(Base):
+    """backup, timesheet post and watch make the same check as the timer run."""
+
+    def setUp(self):
+        super().setUp()
+        self.cfg(backup={"project": 9, "vault": 10}, timesheet={})
+        open(os.path.join(self.cfgdir, "pending-comments.jsonl"), "w").write('{"kind": "comment"}\n')
+        self.stub.me = OTHER
+
+    def test_each_reads_only_the_profile_and_writes_nothing(self):
+        for cmd in (["backup"], ["timesheet", "post"], ["watch", "--chat", "https://3.basecamp.com/1/buckets/9/chats/5"]):
+            self.stub.calls.clear()
+            before = self.snapshot()
+            self.assertEqual(self.run_timer(*cmd), 1, cmd)
+            self.assertEqual(self.stub.calls, [["api", "get", "/my/profile.json"]], cmd)
+            self.assertEqual(self.snapshot(), before, cmd)
+        self.assertEqual(len(self.failed()), 3)
+
+    def test_the_agent_runs_them(self):
         self.stub.me = ACTING
-        self.assertEqual(self.run_timer(), 0)
-
-    def test_another_profiles_ids_are_not_used(self):
-        self.ledger(ACTING, profile="someone-else")
-        self.stub.me = OTHER
-        self.assertEqual(self.run_timer(), 0)
-
-    def test_no_agent_and_no_ledger_runs_unchecked_as_before(self):
-        self.stub.me = OTHER
-        self.assertEqual(self.run_timer(), 0)
+        self.assertEqual(self.run_timer("timesheet", "post"), 0)
         self.assertEqual(self.failed(), [])
-
-
-class Commands(Base):
-    def test_post_message_refuses_to_post_as_someone_else(self):
-        self.stub.me = OTHER
-        body = os.path.join(self.tmp, "body.txt")
-        open(body, "w").write("hi")
-        with redirect_stdout(io.StringIO()):
-            code = sync.cli(["post-message", "--home", self.home, "--config", os.path.join(self.cfgdir, "config.json"),
-                             "--subject", "Report", "--body-file", body], runner=self.stub)
-        self.assertEqual(code, 0)
-        self.assertEqual([c for c in self.stub.calls if c[:2] != ["api", "get"]], [])
-        self.assertIn(f"post-message: the sign-in agent is Jay Park ({OTHER}), not the agent ({ACTING}), not posting",
-                      self.log())
-
-    def test_todo_create_posts_as_the_agent(self):
-        self.assertIsNotNone(self.create())
 
 
 class Config(Base):
@@ -219,13 +220,6 @@ class Init(unittest.TestCase):
         self.stub = self.signed_in_as(OTHER)
         with self.assertRaises(init_home.Refuse):
             self.init().main()
-
-
-class Doctor(unittest.TestCase):
-    def test_the_wrong_login_line_says_to_sign_in_as_the_agent(self):
-        fix = doctor.Doctor.failure_fix("2026-11-11T21:52:26Z FAILED wrong login: the sign-in gilfoyle is Jay Park (1), "
-                                        "not the agent (2), so nothing ran and no state changed; sign in as the agent")
-        self.assertIn("not the agent's Basecamp person", fix)
 
 
 if __name__ == "__main__":

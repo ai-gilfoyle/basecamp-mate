@@ -31,11 +31,11 @@ or by hand from
   including `run.sh`'s token refresh. Absent means the CLI's default login. It changes
   only who acts; `captain` stays the assignee and the only person whose 👍 approves, and
   the acting user's own comments and boosts are never relayed.
-- `agent` (optional): the agent's own Basecamp person id, the person `profile` must sign in
-  as. `init` records it from `/my/profile.json`. A timer run signed in as anyone else does
-  nothing, and the commands post nothing (see [The agent check](running.md#the-agent-check)).
-  Absent, the first agent id the relay ledger (`relay.jsonl`) wrote for this `profile` is
-  used; with neither, the login is not checked.
+- `agent` (required with `profile`): the agent's own Basecamp person id, the person
+  `profile` must sign in as. `init` records it from `/my/profile.json`. A timer run,
+  `backup`, `timesheet post` and `watch` signed in as anyone else do nothing, and with
+  `profile` set but no `agent` they do nothing either (see
+  [The agent check](running.md#the-agent-check)).
 - `todos` (optional): `{}`, `{"todoset": "<to-do set id>"}` or `{"list": "<to-do list id>"}`,
   with `"project": <id>` when they are in another project of the account (default: the
   configured project): where `sync.py todo create` puts the owner's to-dos by default

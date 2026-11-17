@@ -74,9 +74,25 @@ import argparse, hashlib, json, os, re, subprocess, sys
 from zoneinfo import ZoneInfo
 
 from behaviors import COLUMNS
-from tools import RELAY, ledger_agent
+from tools import RELAY
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def ledger_agent(path, profile):
+    """The first agent id the relay ledger at `path` wrote for `profile`, or None."""
+    try:
+        with open(path) as f:
+            for line in f:
+                try:
+                    agent = json.loads(line).get("agent") or {}
+                except (ValueError, AttributeError):
+                    continue
+                if agent.get("profile") == profile and isinstance(agent.get("id"), int) and not isinstance(agent["id"], bool):
+                    return agent["id"]
+    except OSError:
+        pass
+    return None
 CREATABLE = ("Figuring it out", "In progress", "Ready for QA")  # Triage, Not now and Done are built in
 CHECK_ID = "basecamp-sync"
 TIMER_SECONDS = 30  # the timer's period; each behavior's step runs at its own cadence inside it (behaviors.py)
@@ -396,8 +412,7 @@ class Init:
             recorded = ledger_agent(os.path.join(self.dir, RELAY), self.login)
         if recorded is not None and str(recorded) != str(acting):
             problems.append(f"the login {self.login} signs in as {me.get('name')} ({acting}), but this home's agent is "
-                            f"{recorded}; sign the login in as the agent (docs/firstmate-account.md), or remove "
-                            '"agent" from the config to make this person the agent')
+                            f"{recorded}; sign the login in as the agent (docs/firstmate-account.md)")
         people = self.bc("api", "get", f"/projects/{self.project}/people.json") or []
         captain = self.find_captain(people, acting, problems)
         listened = self.find_people(people, acting, problems)
@@ -677,10 +692,16 @@ class Init:
         config_path = os.path.join(self.dir, "config.json")
         existing = json.load(open(config_path)) if os.path.exists(config_path) else None
         plan = []
-        # A config that differs only in the retired "listen" is rewritten without it, no --force needed.
-        retired = existing is not None and "listen" in existing and {k: v for k, v in existing.items() if k != "listen"} == cfg
-        if retired:
+        # A config that differs only in the retired "listen", or in the "agent" an earlier version did not record, is
+        # rewritten without --force.
+        unrecorded = existing is not None and "agent" not in existing and "agent" in cfg
+        retired = (existing is not None and ("listen" in existing or unrecorded)
+                   and {k: v for k, v in existing.items() if k != "listen"}
+                   == {k: v for k, v in cfg.items() if not (unrecorded and k == "agent")})
+        if retired and "listen" in existing:
             plan.append(f'drop the retired "listen" from {config_path} (notifications replaced the event listener)')
+        if retired and unrecorded:
+            plan.append(f'record the agent {cfg["agent"]} in {config_path}')
         for board in self.skipped:
             self.out(f"skipped card table {board!r}: no matching repo; pass --repo-map {board}=<repo> to include it")
         for board, col in to_create:

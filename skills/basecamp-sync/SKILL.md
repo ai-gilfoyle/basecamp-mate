@@ -394,9 +394,9 @@ that read.
   which only the captain can do, so relay it. `FAILED duplicate run` means another home
   holds this project and login (see "One home per project and login"); relay it.
   `FAILED wrong login` means the login is signed in as someone other than the agent (the
-  config's `agent`): the sync did nothing and changed no state, and the commands that post
-  refuse to. Never edit `agent` to match; relay it so the captain signs the login in again as
-  the agent (`FAILED login check`: who it signs in as could not be read; the same applies).
+  config's `agent`): the sync did nothing and changed no state. Never edit `agent` to match;
+  relay it so the captain signs the login in again as the agent (`FAILED login check`: who it
+  signs in as could not be read, or the config has no `agent`; relay it the same way).
 
 The main firstmate's own home answers its questions itself rather than relaying.
 

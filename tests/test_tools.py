@@ -82,7 +82,7 @@ class ToolBase(Base):
     def setUp(self):
         super().setUp()
         self.stub = TodoStub()
-        self.cfg(profile="agent", todos={"todoset": "66"}, message_board="99")
+        self.cfg(profile="agent", agent=ACTING, todos={"todoset": "66"}, message_board="99")
 
     def cfg(self, drop=(), **kw):
         p = os.path.join(self.cfgdir, "config.json")
