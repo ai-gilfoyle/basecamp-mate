@@ -18,11 +18,11 @@ OTHER = 50519852  # an operator, signed in by mistake
 
 class GuardStub(TodoStub):
     """Adds the acting person's name to /my/profile.json, a failing profile read on demand, and a sign-in that changes to
-    `then` after the next profile read."""
+    `then` once `reads` more profile reads are done."""
 
     def __init__(self):
         super().__init__()
-        self.profile_fails, self.then = False, None
+        self.profile_fails, self.then, self.reads = False, None, 1
 
     def __call__(self, cmd, **kw):
         out = super().__call__(cmd, **kw)
@@ -31,7 +31,8 @@ class GuardStub(TodoStub):
                 return type(out)(stdout=json.dumps({"ok": False, "error": "Not authenticated"}), stderr="", returncode=1)
             data = json.loads(out.stdout)
             data["data"]["name"] = {ACTING: "Gilfoyle AI", OTHER: "Jay Park"}.get(self.me)
-            if self.then is not None:
+            self.reads -= 1
+            if self.then is not None and self.reads == 0:
                 self.me, self.then = self.then, None
             return type(out)(stdout=json.dumps(data), stderr="", returncode=0)
         return out
@@ -102,6 +103,15 @@ class TimerRun(Base):
         [failed] = self.failed()
         self.assertIn(f"wrong login: the sign-in agent is Jay Park ({OTHER})", failed)
 
+    def test_a_sign_in_that_changes_while_the_run_waits_to_claim_writes_no_claim(self):
+        self.stub.then, self.stub.reads = OTHER, 2
+        self.assertEqual(self.run_timer(), 1)
+        self.assertEqual(self.stub.calls, [["api", "get", "/my/profile.json"]] * 3)
+        self.assertEqual(sync.runs.Registry().claims(), [])
+        self.assertFalse(os.path.exists(os.path.join(self.cfgdir, "timer.json")))
+        [failed] = self.failed()
+        self.assertIn(f"wrong login: the sign-in agent is Jay Park ({OTHER})", failed)
+
     def test_each_refused_run_logs_its_line(self):
         self.stub.me = OTHER
         for _ in range(2):
@@ -114,6 +124,16 @@ class TimerRun(Base):
         self.assertEqual(sorted(os.listdir(self.cfgdir)), ["config.json", "sync.log"])
         [failed] = self.failed()
         self.assertIn("login check: could not read who the sign-in agent is", failed)
+
+    def test_a_dry_run_with_an_unreadable_profile_prints_and_logs_nothing(self):
+        self.stub.profile_fails = True
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = sync.cli(["--home", self.home, "--config", os.path.join(self.cfgdir, "config.json"), "--dry-run"],
+                            runner=self.stub)
+        self.assertEqual(code, 1)
+        self.assertIn("FAILED login check: could not read who the sign-in agent is", out.getvalue())
+        self.assertEqual(sorted(os.listdir(self.cfgdir)), ["config.json"])
 
     def test_a_dry_run_prints_and_logs_nothing(self):
         self.stub.me = OTHER
@@ -144,6 +164,26 @@ class NoAgent(Base):
         self.assertIn('login check: the config has no "agent", so nothing ran; add "agent"', failed)
         self.assertNotIn("agent", json.load(open(os.path.join(self.cfgdir, "config.json"))))
 
+    def test_without_a_profile_too(self):
+        self.cfg(drop=("profile",))
+        self.assertEqual(self.run_timer(), 1)
+        self.assertIn('the config has no "agent"', self.failed()[0])
+
+
+class DefaultLogin(Base):
+    """Without a profile, the CLI's default login is checked the same way."""
+
+    def setUp(self):
+        super().setUp()
+        self.cfg(drop=("profile",))
+
+    def test_someone_else_is_refused_and_the_agent_runs(self):
+        self.stub.me = OTHER
+        self.assertEqual(self.run_timer(), 1)
+        self.assertIn(f"wrong login: the default sign-in is Jay Park ({OTHER})", self.failed()[0])
+        self.stub.me = ACTING
+        self.assertEqual(self.run_timer(), 0)
+
 
 class FeedCommands(Base):
     """backup, timesheet post and watch make the same check as the timer run."""
@@ -171,11 +211,11 @@ class FeedCommands(Base):
 
 class Config(Base):
     def test_agent_must_be_a_person_id(self):
-        for bad in ("gilfoyle", True, [1]):
+        for bad in ("gilfoyle", str(ACTING), True, [1]):
             self.cfg(agent=bad)
             with self.assertRaises(ValueError):
                 self.sync()
-        self.cfg(agent=str(ACTING))
+        self.cfg(agent=ACTING)
         self.assertEqual(self.sync().agent_id, ACTING)
 
 
@@ -205,21 +245,27 @@ class Init(unittest.TestCase):
         self.stub = self.signed_in_as(OTHER)
         with self.assertRaises(init_home.Refuse) as e:
             self.init().main()
-        self.assertIn(f"signs in as Jay Park ({OTHER}), but this home's agent is {test_init.ACTING}", str(e.exception))
+        self.assertIn(f"signs in as Jay Park ({OTHER}), but the agent is {test_init.ACTING}", str(e.exception))
+        self.assertEqual(self.files(), before)
+        with self.assertRaises(init_home.Refuse):
+            self.init(agent=None).main()
         self.assertEqual(self.files(), before)
 
-    def test_a_home_without_agent_takes_the_ledger_id(self):
-        self.init().main()
-        cfg = os.path.join(self.dir, "config.json")
-        c = json.load(open(cfg))
-        c.pop("agent")
-        json.dump(c, open(cfg, "w"))
-        with open(os.path.join(self.dir, "relay.jsonl"), "w") as f:
-            f.write(json.dumps({"agent": {"profile": "firstmate", "id": test_init.ACTING}}) + "\n")
+    def test_the_agent_comes_only_from_agent_or_the_config_never_from_the_login(self):
         self.stub.people.append({"id": OTHER, "name": "Jay Park", "owner": False})
         self.stub = self.signed_in_as(OTHER)
+        self.init(agent=None).main()
+        cfg = os.path.join(self.dir, "config.json")
+        self.assertNotIn("agent", json.load(open(cfg)))
+        self.assertTrue(any('no "agent"' in p for p in self.printed))
         with self.assertRaises(init_home.Refuse):
             self.init().main()
+        self.assertNotIn("agent", json.load(open(cfg)))
+
+    def test_an_older_config_gains_the_agent_given_without_force(self):
+        self.init(agent=None).main()
+        self.init().main()
+        self.assertEqual(json.load(open(os.path.join(self.dir, "config.json")))["agent"], test_init.ACTING)
 
 
 if __name__ == "__main__":

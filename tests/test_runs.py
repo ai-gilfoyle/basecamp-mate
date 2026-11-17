@@ -66,7 +66,7 @@ class Guard(GuardBase):
         self.assertIn("FAILED duplicate run", self.log())
         self.assertIn(f"home {self.other_home} (config {os.path.realpath(self.other)})", self.log())
         self.assertIn("also watching project 1111111/22222222", self.log())
-        self.assertEqual(self.stub.calls, [])  # read nothing
+        self.assertEqual([c for c in self.stub.calls if c != ["api", "get", "/my/profile.json"]], [])  # read nothing else
         self.assertEqual([c["config"] for c in runs.Registry().claims()], [os.path.realpath(self.other)])
 
     def test_the_refusal_is_logged_once_then_hourly(self):

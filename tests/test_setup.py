@@ -148,6 +148,7 @@ class Base(unittest.TestCase):
 
     def setup(self, interactive=False, inputs=(), **answers):
         answers.setdefault("home", self.home)
+        answers.setdefault("agent", ACTING)
         feed = list(inputs)
         prompter = setup_home.Prompter(answers, interactive=interactive, inp=lambda q: feed.pop(0), out=self.printed.append)
         s = setup_home.Setup(prompter, runner=self.stub, system=self.system, which=lambda n: "/usr/bin/" + n,
@@ -271,7 +272,7 @@ class SetupTest(Base):
     def test_cli_answers_file(self):
         answers = os.path.join(self.tmp, "answers.json")
         with open(answers, "w") as f:
-            json.dump({"home": self.home, "project": PROJECT, "checkins": False, "todos": False}, f)
+            json.dump({"home": self.home, "project": PROJECT, "agent": ACTING, "checkins": False, "todos": False}, f)
         rc = setup_home.cli(["--answers", answers], runner=self.stub, system=self.system,
                             which=lambda n: "/usr/bin/" + n, sync_dir=self.repo, out=self.printed.append)
         self.assertEqual(rc, 0)

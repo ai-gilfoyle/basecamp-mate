@@ -131,6 +131,7 @@ class InitTest(unittest.TestCase):
 
     def init(self, dry=False, **kw):
         kw.setdefault("repo_map", ["server=my-server"])
+        kw.setdefault("agent", ACTING)
         return init_home.Init(URL, "firstmate", self.home, dry=dry, runner=self.stub, system=self.system,
                               sync_dir=os.path.join(self.tmp, "repo"), out=self.printed.append, **kw)
 

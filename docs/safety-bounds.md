@@ -1,6 +1,6 @@
 # Safety bounds
 
-- A timer run, `backup`, `timesheet post` or `watch` whose `profile` signs in as anyone
+- A timer run, `backup`, `timesheet post` or `watch` whose login signs in as anyone
   but the agent (`agent` in the config), or whose config has no `agent`, does nothing: it
   reads only `/my/profile.json`, writes no state and logs a FAILED line. See
   [The agent check](running.md#the-agent-check).

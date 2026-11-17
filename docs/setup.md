@@ -14,8 +14,10 @@ python3 sync.py init https://app.basecamp.com/<account>/projects/<project> --log
 tables in the project's dock, each matched to a backlog repo by its title
 (case-insensitive, surrounding spaces ignored) against the names in the home's
 `data/projects.md`; each table's columns by their exact names; the login's own identity
-(`/my/profile.json`), recorded as `agent` for [the agent check](running.md#the-agent-check)
-(a re-run signed in as a different person is refused); the captain; the chats in the dock; and, when the dock has one
+(`/my/profile.json`), which must be the `--agent <person id>` given (or, on a re-run
+without it, the existing config's `agent`), recorded as `agent` for
+[the agent check](running.md#the-agent-check); without either, `agent` is left out and
+the sync does nothing until it is set; the captain; the chats in the dock; and, when the dock has one
 Message Board, `releases`: its id and the GitHub repo behind each mapped repo's
 `<home>/projects/<repo>` origin (renames followed through `gh repo view`), named by its
 board. A repo's `note` is added by hand. `--captain <person id or
@@ -102,7 +104,8 @@ guided front end to `init` for people: it checks Python, the `basecamp` CLI (off
 installer; 0.12.0 or newer) and systemd user services; asks for the home; signs the login in with
 `basecamp profile create <login> --device-code` (or `auth login -P <login> --device-code`)
 under `BASECAMP_NO_KEYRING=1`; lists the login's accounts and projects to pick from and the
-project's people to pick the captain from; asks the yes/no questions (chat inbox, decision
+project's people to pick the captain from; asks for the agent's person id (shown beside the
+login's own, but typed, never taken from the login; `init` refuses when they differ); asks the yes/no questions (chat inbox, decision
 to-dos, check-ins on; card mirror, releases, reports, Pings off by default) and the
 check-in time zone, and, when inbox notes are chosen, whether to turn on the session alert
 (default yes, 15 minutes, in the dock's chat); enables or adds the dock tool each chosen behavior needs (to-do set,
@@ -111,7 +114,7 @@ repo that has none; then runs `init` itself (with `--create-missing-columns` onl
 mirror, `--force` after asking when the home already has a config, and `--no-keyring`), runs
 `run.sh` once as a test sync, and prints what is on and how to change it.
 `--answers <file.json>` answers by key (`home`, `login`, `account`, `project` (id or URL),
-`captain` (person id), `timezone`, `replace`, `install_cli`, and booleans `chat`, `todos`,
+`captain` (person id), `agent` (person id), `timezone`, `replace`, `install_cli`, and booleans `chat`, `todos`,
 `checkins`, `cards`, `releases`, `reports`, `pings`, `inbox`, `session_alert`) and `--yes` takes the
 defaults; without a terminal, anything that needs a person (a sign-in, an unanswered pick)
 refuses with what to do instead of asking.

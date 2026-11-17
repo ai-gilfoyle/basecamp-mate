@@ -69,6 +69,10 @@ class BasecampError(RuntimeError):
         self.code, self.error = code, error or ""
 
 
+class WrongLogin(RuntimeError):
+    """Nothing may run as this login: it is not the agent's (Tools.wrong_login)."""
+
+
 class Tools:
     def __init__(self, home, config_path, dry=False, runner=subprocess.run):
         self.home = os.path.abspath(home)
@@ -135,12 +139,12 @@ class Tools:
         self.ack_read = ((ack or {}).get("read") or "").strip() or None
         self.ack_decided = ((ack or {}).get("decided") or "").strip() or None
         self.profile = cfg.get("profile")
-        # "agent": the agent's own Basecamp person id, which the profile must sign in as (init records it). A run signed
-        # in as anyone else does nothing (wrong_login).
+        # "agent": the agent's own Basecamp person id, which the login must sign in as (init --agent records it). A run
+        # signed in as anyone else, or with no "agent", does nothing (wrong_login).
         agent = cfg.get("agent")
-        if agent is not None and (isinstance(agent, bool) or not str(agent).strip().isdigit()):
-            raise ValueError('config "agent" must be the agent\'s Basecamp person id')
-        self.agent_id = int(agent) if agent is not None else None
+        if agent is not None and (isinstance(agent, bool) or not isinstance(agent, int)):
+            raise ValueError('config "agent" must be the agent\'s Basecamp person id, a number')
+        self.agent_id = agent
         self.ask_chat = str(cfg["ask_chat"]) if cfg.get("ask_chat") is not None else None
         self.checkins = cfg.get("checkins")
         self.todos = cfg.get("todos")
@@ -170,7 +174,6 @@ class Tools:
         self.dry, self.run = dry, runner
         self._acting = False  # acting person id once resolved; None when it can't be
         self._acting_sgid = None  # the acting person's mention sgid, to spot @mentions in chat
-        self._acting_name = None  # the acting person's name, for the wrong-login line
         self._pingable = None  # the people the acting login can @mention, read once a run when a reply first needs them
         self._bucket_people = {}  # project id -> the ids of its people, read once a run when a chat reply first needs them
         self._received = False  # this run's read of the acting person's received boosts, by id; None when it failed
@@ -374,32 +377,40 @@ class Tools:
             if self.profile:
                 try:
                     me = self.bc("api", "get", "/my/profile.json") or {}
-                    self._acting, self._acting_sgid, self._acting_name = me.get("id"), me.get("attachable_sgid"), me.get("name")
+                    self._acting, self._acting_sgid = me.get("id"), me.get("attachable_sgid")
                 except RuntimeError as e:
                     self.log(f"acting identity unknown, acknowledgement boosts wait for the next run: {e}")
                     self._acting = "retry"
         return self._acting
 
     def wrong_login(self):
-        """Why nothing may run as this login, or None: the config names no "agent", the profile signs in as someone other
-        than the agent, or who it signs in as could not be read. Reads /my/profile.json afresh on each call; writes
-        nothing. Without a profile there is no agent login to check."""
-        if not self.profile:
-            return None
+        """Why nothing may run as this login, or None: the config names no "agent", the login signs in as someone other
+        than the agent, or who it signs in as could not be read. Reads /my/profile.json afresh on each call (with a
+        profile, that read is the run's acting identity); writes nothing."""
+        login = f"the sign-in {self.profile}" if self.profile else "the default sign-in"
         if self.agent_id is None:
             return (f'login check: the config has no "agent", so nothing ran; add "agent": <the agent\'s Basecamp person '
-                    f'id> to {self.config_path}, or re-run init signed in as the agent to record it')
-        self._acting = False
-        me = self.acting_id()
-        relogin = f"sign in as the agent: BASECAMP_NO_KEYRING=1 basecamp auth login -P {self.profile} --device-code"
-        if me == "retry":
-            return (f"login check: could not read who the sign-in {self.profile} is (/my/profile.json), so nothing ran; "
-                    f"if it keeps failing, {relogin}")
-        if me != self.agent_id:
-            who = f"{self._acting_name} ({me})" if self._acting_name else str(me)
-            return (f"wrong login: the sign-in {self.profile} is {who}, not the agent ({self.agent_id}), so nothing ran "
-                    f"and no state changed; {relogin}")
+                    f'id> to {self.config_path} (or re-run init with --agent <id>)')
+        relogin = ("sign in as the agent: BASECAMP_NO_KEYRING=1 basecamp auth login "
+                   + (f"-P {self.profile} " if self.profile else "") + "--device-code")
+        try:
+            me = self.bc("api", "get", "/my/profile.json") or {}
+        except RuntimeError as e:
+            return (f"login check: could not read who {login} is (/my/profile.json: {e}), so nothing ran; if it keeps "
+                    f"failing, {relogin}")
+        if self.profile:
+            self._acting, self._acting_sgid = me.get("id"), me.get("attachable_sgid")
+        if me.get("id") != self.agent_id:
+            who = f"{me.get('name')} ({me.get('id')})" if me.get("name") else str(me.get("id"))
+            return (f"wrong login: {login} is {who}, not the agent ({self.agent_id}), so nothing ran and no state "
+                    f"changed; {relogin}")
         return None
+
+    def require_login(self):
+        """Raise WrongLogin when nothing may run as this login (wrong_login)."""
+        why = self.wrong_login()
+        if why:
+            raise WrongLogin(why)
 
     def refused(self, what, who="captain"):
         """True (logged) when a command must not post: no profile, or the profile is the owner."""

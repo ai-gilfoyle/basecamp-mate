@@ -48,8 +48,8 @@ run beside another home's live run on the same thing with the same login;
 A sign-in can be given to the wrong person: after a login outage, someone approves
 `basecamp auth login -P <profile>` in a browser signed in as themselves. Before anything
 else, each timer run reads `/my/profile.json` and compares its id with the config's `agent`
-(see [Config and state](config.md)), and reads it again once it holds the state lock. If
-the profile signs in as anyone else, the run does nothing more: it reads no notifications,
+(see [Config and state](config.md)), reads it again once it holds the state lock, and
+once more just before it writes its run claim. If the login signs in as anyone else, the run does nothing more: it reads no notifications,
 Pings or threads, boosts nothing, marks nothing read, writes no record, inbox note, state
 file or run claim, and exits 1. It logs a line that names both people and the command to
 sign in again:
@@ -59,12 +59,12 @@ FAILED wrong login: the sign-in firstmate is Jay Park (50519852), not the agent 
 ```
 
 A run that cannot read `/my/profile.json` at all is skipped the same way, with a
-`FAILED login check` line. A config with `profile` but no `agent` is skipped too, with a
-`FAILED login check` line that says to add `agent`, or to re-run `init` signed in as the
-agent, which records it without `--force` (for a home with a relay ledger, only when the
-login is the agent the ledger names). When the right person signs in again, the next run
-carries on from the state the last good run left. `backup`, `timesheet post` and `watch`
-make the same check. Without `profile`, nothing is checked.
+`FAILED login check` line, and so is a config without `agent`, with a `FAILED login check`
+line that says to add it by hand or to re-run `init` with `--agent <id>`, which adds it
+to a config that lacks it without `--force`. A dry run prints the line and writes nothing.
+When the right person signs in again, the next run carries on from the state the last good
+run left. `backup`, `timesheet post` and `watch` make the same check, before and inside the
+state lock. The check is the same with or without `profile`.
 
 ## A dedicated Basecamp user
 

@@ -45,10 +45,11 @@ Deterministic, no model calls. Safety bounds, enforced here:
     timesheet entry per piece of work per finished day (timesheet.json keeps each one posted);
   - only the explicit commands post, run by the agent, and each refuses to when no
     profile is set or the profile signs in as the owner;
-  - with a profile, a timer run, `backup`, `timesheet post` and `watch` do nothing unless
-    the profile signs in as the agent ("agent" in the config, which init records): they
-    read only /my/profile.json, before and again inside the state lock, write no state
-    and log one FAILED line; a config without "agent" is refused the same way;
+  - a timer run, `backup`, `timesheet post` and `watch` do nothing unless the login signs
+    in as the agent ("agent" in the config, set by init --agent): they read only
+    /my/profile.json, before and again inside the state lock (a timer run once more just
+    before it writes its run claim), write no state and log one FAILED line; a config
+    without "agent" is refused the same way;
   - id maps (map.json, todos.json, ...) make re-runs update or skip instead of
     duplicating.
 All runtime state lives in the directory that holds the config file, except each config's
@@ -90,7 +91,7 @@ from datetime import datetime, timezone
 
 import behaviors, login, runs
 from behaviors import COLUMNS, render_decision, render_release, inline_md  # noqa: F401
-from tools import (Tools, THUMBS, EYES, BOOST_MAX, is_due, render_reply, is_emoji, is_thumbs_up,  # noqa: F401
+from tools import (Tools, WrongLogin, THUMBS, EYES, BOOST_MAX, is_due, render_reply, is_emoji, is_thumbs_up,  # noqa: F401
                    parse_lavish, parse_show, task_item, none, parse_chat_url)
 
 
@@ -198,7 +199,7 @@ class Sync(Tools):
         self.end_watches()  # a watch past its day, or with an "until" that is not a date, ends here, logged once
         buckets = {str(r.get("bucket") or self.project) for r in self.watches().values()}
         others = reg.claim(self.config_path, self.home, self.cfg, me if isinstance(me, int) else None, allow=allow, dry=self.dry,
-                           buckets=buckets)
+                           buckets=buckets, verify=self.require_login)
         self.watch_held = set(reg.held)
         now, say = reg.now(), print if self.dry else self.log
         homes = sorted(c.get("home") or "?" for c, _ in others)
@@ -571,6 +572,9 @@ def cli(argv=None, runner=subprocess.run):
             if refused_login(s) or not s.claim(allow=a.allow_duplicate):
                 return 1
             s.main(due=not a.all)
+    except WrongLogin as e:
+        (print if s.dry else s.log)(f"FAILED {e}")
+        return 1
     except Exception as e:
         s.log(f"FAILED {type(e).__name__}: {e}")
         return 1

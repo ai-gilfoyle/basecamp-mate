@@ -74,25 +74,9 @@ import argparse, hashlib, json, os, re, subprocess, sys
 from zoneinfo import ZoneInfo
 
 from behaviors import COLUMNS
-from tools import RELAY
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-
-def ledger_agent(path, profile):
-    """The first agent id the relay ledger at `path` wrote for `profile`, or None."""
-    try:
-        with open(path) as f:
-            for line in f:
-                try:
-                    agent = json.loads(line).get("agent") or {}
-                except (ValueError, AttributeError):
-                    continue
-                if agent.get("profile") == profile and isinstance(agent.get("id"), int) and not isinstance(agent["id"], bool):
-                    return agent["id"]
-    except OSError:
-        pass
-    return None
 CREATABLE = ("Figuring it out", "In progress", "Ready for QA")  # Triage, Not now and Done are built in
 CHECK_ID = "basecamp-sync"
 TIMER_SECONDS = 30  # the timer's period; each behavior's step runs at its own cadence inside it (behaviors.py)
@@ -267,7 +251,7 @@ class System:
 
 
 class Init:
-    def __init__(self, url, login, home, captain=None, listen_to=(), operators=(), participants_project=False,
+    def __init__(self, url, login, home, captain=None, agent=None, listen_to=(), operators=(), participants_project=False,
                  participants_domains=(), participants_company=None, repo_map=(), create_missing=False, dry=False,
                  force=False, cards=True, assign_captain=True, todos=False, reports=False, every_line=False, checkins=None, releases=True, inbox=False,
                  session_alert=None, pings=False, assigned_todos=False, assigned_anywhere=False, assigned_cards=False, assigned_steps=False, mentions_anywhere=False, advisories=(), backup=None, timesheet=False, chats=True,
@@ -275,6 +259,7 @@ class Init:
         self.account, self.project = parse_url(url)
         self.login, self.home = login, os.path.abspath(home)
         self.captain_arg, self.listen_to, self.operator_args = captain, list(listen_to), list(operators)
+        self.agent_arg = agent
         # participants_company: True admits the captain's company, False never; None keeps an existing config's setting,
         # and for a new home admits the company only on a team account.
         self.participants_project, self.participants_company = participants_project, participants_company
@@ -407,12 +392,13 @@ class Init:
             cfg_tables[board] = entry
         me = self.bc("api", "get", "/my/profile.json") or {}
         acting = me.get("id")
-        recorded = (self.existing() or {}).get("agent")
-        if recorded is None and self.existing() is not None:  # a home set up before init recorded the agent
-            recorded = ledger_agent(os.path.join(self.dir, RELAY), self.login)
-        if recorded is not None and str(recorded) != str(acting):
-            problems.append(f"the login {self.login} signs in as {me.get('name')} ({acting}), but this home's agent is "
-                            f"{recorded}; sign the login in as the agent (docs/firstmate-account.md)")
+        agent = self.agent_arg if self.agent_arg is not None else (self.existing() or {}).get("agent")
+        if agent is not None and agent != acting:
+            problems.append(f"the login {self.login} signs in as {me.get('name')} ({acting}), but the agent is "
+                            f"{agent}; sign the login in as the agent (docs/firstmate-account.md)")
+        elif agent is None:
+            self.notes.append('no "agent" in the config: the sync does nothing until it names the agent\'s person id; '
+                              "re-run with --agent <id>")
         people = self.bc("api", "get", f"/projects/{self.project}/people.json") or []
         captain = self.find_captain(people, acting, problems)
         listened = self.find_people(people, acting, problems)
@@ -420,7 +406,7 @@ class Init:
         if problems:
             raise Refuse("init refused, nothing was written:\n  - " + "\n  - ".join(problems))
         cfg = {"account": self.account, "project": self.project, "captain": captain, "profile": self.login,
-               **({"agent": acting} if isinstance(acting, int) else {})}
+               **({"agent": agent} if agent is not None else {})}
         # A re-run keeps the people and operators an existing config names besides these, unless --replace-people.
         kept = {} if self.replace_people or self.existing() is None else self.existing()
         kept_people = [p for p in kept.get("people") or [] if p != captain and p not in listened]
@@ -779,6 +765,8 @@ def cli(argv, **kw):
     ap.add_argument("--login", required=True, help="the basecamp CLI profile the sync acts as")
     ap.add_argument("--home", required=True, help="the firstmate home")
     ap.add_argument("--captain", help="the captain's person id or email (default: the project's account owner)")
+    ap.add_argument("--agent", type=int, help="the agent's own Basecamp person id, the person --login must sign in as "
+                                              "(a re-run keeps the existing config's); without it the sync does nothing")
     ap.add_argument("--listen-to", action="append", default=[], metavar="PERSON",
                     help="also relay this person's lines, comments and boosts as information, never as the captain's "
                          "decisions: a person id, email or exact name on the project or, failing that, in the account "
@@ -868,7 +856,7 @@ def cli(argv, **kw):
         print("--blocked-reply takes the reply's text, and cannot be combined with --no-blocked-reply", file=sys.stderr)
         return 2
     try:
-        Init(a.url, a.login, a.home, captain=a.captain, listen_to=a.listen_to, operators=a.operator,
+        Init(a.url, a.login, a.home, captain=a.captain, agent=a.agent, listen_to=a.listen_to, operators=a.operator,
              participants_project=a.participants_project, participants_domains=a.participants_domain,
              participants_company=a.participants_company, repo_map=a.repo_map,
              create_missing=a.create_missing_columns, dry=a.dry_run, force=a.force,

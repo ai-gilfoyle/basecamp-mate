@@ -87,10 +87,11 @@ then hourly, stale, removed and recycled-pid claims, the override, dry runs, com
 `tests/test_login_guard.py` covers the agent check: a run signed in as someone other than
 the agent reads only `/my/profile.json` and writes no state (an established home and a new
 one), a matching sign-in runs as before, a sign-in that changes while the run waits for the
-state lock, an unreadable profile skipped, a config without `agent` refused, a dry run that
-only prints, `backup`, `timesheet post` and `watch` refused as someone else, a bad `agent`
-value refused, and `init` recording the agent, taking the relay ledger's agent for a home
-without one, and refusing a re-run signed in as someone else;
+state lock or for its run claim, an unreadable profile skipped (in a dry run too, writing
+nothing), a config without `agent` refused with or without a profile, a dry run that only
+prints, `backup`, `timesheet post` and `watch` refused as someone else, an `agent` that is
+not a number refused, and `init` recording only the `--agent` given or the config's, adding
+it to an older config without `--force`, and refusing a login that signs in as someone else;
 `tests/test_login.py` covers the login guard (`sync.py renew`) with a stubbed `basecamp auth`
 and a temporary `credentials.json`: a renewal that empties the file restored from the
 backup, a network-down run leaving the file untouched, only the lost profile put back beside

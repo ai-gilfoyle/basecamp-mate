@@ -41,8 +41,8 @@ is the shipped default.
 
 A person setting a home up by hand runs `$SYNC/bin/basecamp-mate setup`: a guided, plain-language
 setup (sign-in with a link and code, project picker, yes/no questions) that ends in the same
-`init`, which records the login's person id as the config's `agent`. To run it yourself without questions, pass `--answers <file.json>` (keys: `home`,
-`login`, `project` id or URL, `captain` person id, `timezone`, and `true`/`false` for `chat`,
+`init`, which records the agent's person id (asked for, never taken from the login) as the config's `agent`. To run it yourself without questions, pass `--answers <file.json>` (keys: `home`,
+`login`, `project` id or URL, `captain` person id, `agent` person id, `timezone`, and `true`/`false` for `chat`,
 `todos`, `checkins`, `cards`, `releases`, `reports`, `pings`, `inbox`, `session_alert`); it refuses
 instead of asking when the login is not signed in. `$SYNC/bin/basecamp-mate doctor` checks
 everything (CLI, sign-in, project, card columns, notifications, the timer, last sync, wake check) and prints
