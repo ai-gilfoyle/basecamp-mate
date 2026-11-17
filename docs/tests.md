@@ -5,13 +5,14 @@ python3 -m unittest discover -s tests -v
 ```
 
 `tests/test_sync.py` covers the existing behaviors, including a chat reply's @names as mentions (only people on its project, never in a quote) and `render_reply`, and is unchanged by the layer split;
-`tests/test_tools.py` covers the to-do and message tools, the to-do comment reader, the
+`tests/test_tools.py` covers the to-do and message tools, the to-do comment reader, every
+comment read asking for all comments and a limited read keeping the newest, the
 boost readers on every surface, inbox delivery (with `fm-inbox.sh` stubbed), the
 new commands and the layer boundary; `tests/test_notifications.py` covers notifications
 with stubbed `/my/readings.json` and `/my/boosts.json`: the first run seeding without
 replaying, each kind of notification running only its thread's reader (chats, mentions and
 Campfire replies, tracked to-dos, mirrored cards, the agent's messages, check-in Reminders),
-followed threads and mentions with their replies, a comment on a card whose task has left
+followed threads and mentions with their replies (a mention past a thread's 100th comment included), a comment on a card whose task has left
 the backlog, boosts, marking read only after the record is written and not after a failed
 read, a failed mark retried, other projects left alone, unmonitored input once per kind
 (old listener keys still applying), the timer's cadences and the upgrade from a `"listen"`

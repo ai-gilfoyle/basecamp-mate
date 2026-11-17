@@ -46,8 +46,9 @@ class Stub:
         if args[:2] == ["cards", "create"]:
             self.next_id += 1
             data = {"id": self.next_id}
-        elif args[:2] == ["comments", "list"]:
+        elif args[:2] == ["comments", "list"]:  # like the CLI: only the oldest 100 without --all
             data = self.comments.get(args[2], [])
+            data = data if "--all" in args else data[:100]
         elif args[:3] == ["api", "get", "/my/readings.json"]:
             data = self.readings
         elif args[:3] == ["api", "get", "/my/boosts.json"]:

@@ -304,6 +304,16 @@ class Tools:
                 raise BasecampError(f"basecamp {' '.join(args[:3])}: {out.get('error')}", out.get("code"), out.get("error"))
             time.sleep(3)
 
+    def comments(self, recording, project=None, newest=None):
+        """The comments on `recording`, as the basecamp CLI lists them (oldest first). Without `--all` the CLI lists only
+        the oldest 100, and a comment past the 100th was never read, so every read asks for all of them. With `newest`,
+        only the newest that many are kept (by their own created_at), never the oldest."""
+        comments = self.bc("comments", "list", str(recording), "--all", project=project) or []
+        if newest is None:
+            return comments
+        comments = sorted(comments, key=lambda c: (c.get("created_at") or "", c.get("id") or 0))
+        return comments[max(len(comments) - newest, 0):]
+
     def gh(self, *args):
         r = self.run(["gh", *args], capture_output=True, text=True, timeout=60)
         if r.returncode != 0:
@@ -685,7 +695,7 @@ class Tools:
     def read_card_comments(self, task, repo, key, rec):
         """Record the new comments of the people listened to on card rec["card"]: "question" when it has "?", else "comment"."""
         try:
-            comments = self.bc("comments", "list", str(rec["card"])) or []
+            comments = self.comments(rec["card"])
         except RuntimeError as e:
             self.log(f"comments {key}: {e}")
             comments = []
@@ -1121,7 +1131,7 @@ class Tools:
                 if not m.get("comments_count"):
                     continue
                 try:
-                    comments = self.bc("comments", "list", str(m["id"])) or []
+                    comments = self.comments(m["id"])
                 except RuntimeError as e:
                     self.log(f"message {m['id']} comments: {e}")
                     continue
@@ -1199,7 +1209,7 @@ class Tools:
                 deferred = step and self.card_read_elsewhere(key, rec)
                 try:
                     comments = [] if deferred else \
-                        self.bc("comments", "list", str(thread), project=rec.get("bucket")) or []
+                        self.comments(thread, project=rec.get("bucket"))
                 except RuntimeError as e:
                     self.log(f"todo {key}: {e}")
                     continue
@@ -1669,7 +1679,7 @@ class Tools:
         if what == "step":
             boundary = assigned_at or todo.get("created_at")
             try:  # the card's comments up to the assignment are its own: the step's start after them
-                cursor = max([c.get("id", 0) for c in self.bc("comments", "list", str(card["id"]), project=bucket) or []
+                cursor = max([c.get("id", 0) for c in self.comments(card["id"], project=bucket)
                               if boundary is None or not later(c.get("created_at"), boundary)], default=0)
             except RuntimeError as e:
                 self.log(f"todo request {tid}: the comments on card {card['id']}: {e}")
@@ -2014,7 +2024,7 @@ class Tools:
         if self.agent() is None:
             return
         try:
-            comments = self.bc("comments", "list", str(thread), project=bucket) or []
+            comments = self.comments(thread, project=bucket)
         except RuntimeError as e:
             self.log(f"thread {thread}: {e}")
             return
@@ -2742,7 +2752,7 @@ class Tools:
             self.log(f"dry decide {key}: comment on and add a step for {decider} to {rid} in project {bucket}")
             return None
         if tracked is None:
-            comments = self.bc("comments", "list", str(rid), project=bucket) or []
+            comments = self.comments(rid, project=bucket)
             rec = {"todo": rid, "title": thing.get("title") or thing.get("content"), "url": thing.get("app_url"), "on": True,
                    "cursor": max([c.get("id", 0) for c in comments], default=0), "boost_counts": {}, "boost_seen": [],
                    "created": now_iso(), **({"bucket": int(bucket)} if bucket != str(self.project) else {}),
@@ -2773,7 +2783,7 @@ class Tools:
                 return False
         bucket = str(project or self.project)
         todo = self.bc("api", "get", f"/buckets/{bucket}/todos/{tid}.json", project=bucket) or {}
-        comments = self.bc("comments", "list", str(tid), project=bucket) or []
+        comments = self.comments(tid, project=bucket)
         cursor = max([c.get("id", 0) for c in comments], default=0)
         if self.dry:
             self.log(f"dry todo track {key}: todo {tid}, cursor {cursor}")
