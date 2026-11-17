@@ -285,10 +285,10 @@ class Tools:
         self.ledger("skipped", kind=kind, recording=recording, reason=reason, bucket=None if bucket is None else int(bucket),
                     text=text, url=url, author={"id": person.get("id"), "name": person.get("name")}, **more)
 
-    def bc(self, *args, input=None, project=None, tries=3, whole=False):
+    def bc(self, *args, input=None, project=None, tries=3):
         """Run the basecamp CLI on the configured project, or on `project` (another bucket of the account) when given;
-        a retryable failure is tried again, up to `tries` runs in all. With `whole`, a list the CLI reports as cut
-        short (its notice) is a failure, not a success."""
+        a retryable failure is tried again, up to `tries` runs in all. A `comments list` the CLI reports as cut short
+        (its notice) is a failure, not a success."""
         prof = ["-P", self.profile] if self.profile else []
         cmd = ["basecamp", "-a", self.account, *prof, *args, "-p", str(project or self.project), "--json"]
         for attempt in range(tries):
@@ -298,7 +298,7 @@ class Tools:
                 out = json.loads(r.stdout)
             except ValueError:
                 out = {"ok": False, "error": (r.stdout + r.stderr)[:300]}
-            if out.get("ok") and whole and out.get("notice"):
+            if out.get("ok") and args[:2] == ("comments", "list") and out.get("notice"):
                 self.errors += 1
                 raise BasecampError(f"basecamp {' '.join(args[:3])}: incomplete: {out['notice']}")
             if out.get("ok"):
@@ -313,7 +313,7 @@ class Tools:
         the oldest 100, and a comment past the 100th was never read, so every read asks for all of them, and a list the
         CLI reports as incomplete raises BasecampError. With `newest`,
         only the newest that many are kept (by their own created_at), never the oldest."""
-        comments = self.bc("comments", "list", str(recording), "--all", project=project, whole=True) or []
+        comments = self.bc("comments", "list", str(recording), "--all", project=project) or []
         if newest is None:
             return comments
         comments = sorted(comments, key=lambda c: (datetime.fromisoformat(c["created_at"].replace("Z", "+00:00")), c["id"]))
