@@ -40,7 +40,9 @@ own:
 Every reader of a to-do's, card's, message's or other thread's comments lists all of them
 (`basecamp comments list --all`). Without `--all` the CLI lists only the oldest 100, so a
 comment past the 100th was never read and its notification was still marked read. A read
-limited to fewer comments than the thread holds keeps the newest, never the oldest.
+limited to fewer comments than the thread holds keeps the newest, never the oldest. A list
+the CLI reports as incomplete (its notice) is a failed read: the thread's cursor stays put
+and its notification stays unread for the next run.
 
 The agent's login hears what it is subscribed to: what it created, commented on or was
 assigned, plus anything it was @mentioned in, replied to or Pinged in. To have it hear

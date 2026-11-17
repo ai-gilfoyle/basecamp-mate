@@ -12,7 +12,7 @@ new commands and the layer boundary; `tests/test_notifications.py` covers notifi
 with stubbed `/my/readings.json` and `/my/boosts.json`: the first run seeding without
 replaying, each kind of notification running only its thread's reader (chats, mentions and
 Campfire replies, tracked to-dos, mirrored cards, the agent's messages, check-in Reminders),
-followed threads and mentions with their replies (a mention past a thread's 100th comment included), a comment on a card whose task has left
+followed threads and mentions with their replies (a mention past a thread's 100th comment included, and a list the CLI reports as incomplete left unread and retried), a comment on a card whose task has left
 the backlog, boosts, marking read only after the record is written and not after a failed
 read, a failed mark retried, other projects left alone, unmonitored input once per kind
 (old listener keys still applying), the timer's cadences and the upgrade from a `"listen"`
