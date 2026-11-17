@@ -1209,6 +1209,8 @@ class RenderReply(unittest.TestCase):
                          "<div>&lt;BLOCKQUOTE cite=&#x27;x&#x27;&gt;<br>@Fitz said<br>&lt;/blockquote&gt;</div><div><M2></div>")
         self.assertEqual(sync.render_reply("- <blockquote>@Fitz\n- still quoted</blockquote>\n- @Fitz", tags),
                          "<ul><li>&lt;blockquote&gt;@Fitz</li><li>still quoted&lt;/blockquote&gt;</li><li><M2></li></ul>")
+        self.assertEqual(sync.render_reply("Use `<blockquote>` for quotes, @Fitz.\n\n@Fitz please check.", tags),
+                         "<div>Use &lt;blockquote&gt; for quotes, <M2>.</div><div><M2> please check.</div>")
 
     def test_mentions_inside_emphasis_but_not_in_emails(self):
         tags = {"Caleb.LeNoir": "<M1>", "Fitz": "<M2>"}

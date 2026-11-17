@@ -3410,8 +3410,10 @@ def render_reply(text, mention=None):
             i += 1
             out.append("<pre>" + "<br>".join(block) + "</pre>")
             continue
-        # Quoted text never notifies anyone: no mention on a line in or touching an HTML <blockquote> written as text.
-        opens, closes = len(re.findall(r"<blockquote\b", line, re.I)), len(re.findall(r"</blockquote\s*>", line, re.I))
+        # Quoted text never notifies anyone: no mention on a line in or touching an HTML <blockquote> written as text
+        # (one in `code` is only shown, so it quotes nothing).
+        bare = re.sub(r"`[^`]+`", "", line)
+        opens, closes = len(re.findall(r"<blockquote\b", bare, re.I)), len(re.findall(r"</blockquote\s*>", bare, re.I))
         tag = None if depth or opens or closes else mention
         depth = max(0, depth + opens - closes)
         m = re.match(r"([*+-]|\d+[.)])\s+(.*)", line)
