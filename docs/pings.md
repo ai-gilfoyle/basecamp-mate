@@ -16,5 +16,6 @@ first run) and a line cursor per Ping chat: history from before `since` is never
 while a Ping that starts later is relayed from its first line. The agent answers with
 `sync.py reply --recording <line>`, which posts a new line in that Ping (the `basecamp
 chat` commands refuse circle buckets, so it posts to the lines endpoint) and removes the
-👀, under the same refusal rules as every reply. Without a `profile`, or with one that
+👀, under the same refusal rules as every reply. An `@First.Last` or `@First` in the reply
+becomes a real mention, as in a chat reply (see [Safety bounds](safety-bounds.md)). Without a `profile`, or with one that
 signs in as the owner, nothing is read: the readings would be the owner's own.

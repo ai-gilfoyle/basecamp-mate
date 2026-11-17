@@ -4,7 +4,7 @@
 python3 -m unittest discover -s tests -v
 ```
 
-`tests/test_sync.py` covers the existing behaviors and is unchanged by the layer split;
+`tests/test_sync.py` covers the existing behaviors, including a chat reply's @names as mentions (only people on its project, never in a quote) and `render_reply`, and is unchanged by the layer split;
 `tests/test_tools.py` covers the to-do and message tools, the to-do comment reader, the
 boost readers on every surface, inbox delivery (with `fm-inbox.sh` stubbed), the
 new commands and the layer boundary; `tests/test_notifications.py` covers notifications
@@ -20,7 +20,7 @@ several people with who wrote each record, captain-only approvals and decisions,
 unchanged single-captain config and `init --listen-to` and `--operator` (someone only in
 the account accepted and named, a miss or a tie in the account and a failed account read
 refused, a re-run keeping the people and operators it does not name, `--replace-people`); `tests/test_pings.py` covers the Ping reader with a stubbed
-`/my/readings.json`, the reply in a Ping, and a Ping's notification and boosts;
+`/my/readings.json`, the reply in a Ping (its @names as mentions of its own participants only, or as text when the people cannot be read), and a Ping's notification and boosts;
 `tests/test_trust.py` covers operators and participants: roles, an operator's line,
 decision, approval and to-do request authorizing, project members and email domains heard
 as participants (clients, strangers and masked emails not), never through boosts,

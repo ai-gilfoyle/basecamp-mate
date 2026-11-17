@@ -1,5 +1,5 @@
 """Unit tests for sync.py. The basecamp and tasks-axi CLIs are stubbed; nothing touches the network."""
-import json, os, shutil, sys, tempfile, unittest
+import json, os, re, shutil, sys, tempfile, unittest
 from types import SimpleNamespace
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -24,6 +24,8 @@ class Stub:
         self.lavish, self.lavish_calls = "", 0  # stdout of plain `lavish-axi`, or an exception to raise
         self.readings, self.my_boosts = {"unreads": [], "reads": []}, []  # /my/readings.json, /my/boosts.json
         self.marked = []  # the ids of each `notifications read` call
+        self.pingable = []  # `people pingable`: the people the acting login can @mention; None fails it, an exception is raised
+        self.project_people = {}  # bucket id -> its /projects/<id>/people.json; a bucket not listed has everyone pingable
 
     def __call__(self, cmd, **kw):
         if cmd[0] == "lavish-axi":
@@ -50,6 +52,16 @@ class Stub:
             data = self.readings
         elif args[:3] == ["api", "get", "/my/boosts.json"]:
             data = self.my_boosts
+        elif args[:2] == ["people", "pingable"]:
+            if isinstance(self.pingable, Exception):
+                raise self.pingable
+            if self.pingable is None:
+                return SimpleNamespace(stdout=json.dumps({"ok": False, "error": "boom"}), stderr="", returncode=1)
+            data = self.pingable
+        elif args[:2] == ["api", "get"] and re.fullmatch(r"/projects/\d+/people\.json", args[2]):
+            data = self.project_people.get(args[2].split("/")[2], self.pingable if isinstance(self.pingable, list) else [])
+            if data is None:
+                return SimpleNamespace(stdout=json.dumps({"ok": False, "error": "boom"}), stderr="", returncode=1)
         elif args[:2] == ["notifications", "read"]:
             self.marked.append(args[2:])
         elif args[:3] == ["api", "get", "/my/profile.json"]:
@@ -773,6 +785,62 @@ class Chats(Base):
         self.sync().main([])
         self.assertEqual(len(self.pending()), 1)
 
+    def test_reply_turns_at_names_into_mentions(self):
+        self.stub.pingable = [{"id": 1, "name": "Caleb LeNoir", "attachable_sgid": "sg-caleb"},
+                              {"id": 2, "name": "Fitz", "attachable_sgid": "sg-fitz"},
+                              {"id": 3, "name": "Randy Johnson", "attachable_sgid": "sg-randy"},
+                              {"id": 4, "name": "Randy Smith", "attachable_sgid": "sg-randys"}]
+        self.stub.lines["77"].append(line(2))
+        self.sync().main([])
+        self.assertTrue(self.sync().reply(2, "@Caleb.LeNoir and @fitz: ask @Randy, @Nobody, a@b.io or `@Fitz`."))
+        tag = '<bc-attachment sgid="{}" content-type="application/vnd.basecamp.mention"></bc-attachment>'
+        self.assertEqual(self.stub.chat_posts(), [("77", f"<div>{tag.format('sg-caleb')} and {tag.format('sg-fitz')}: "
+                                                         "ask @Randy, @Nobody, a@b.io or @Fitz.</div>")])
+        self.assertEqual(sum(c[:2] == ["people", "pingable"] for c in self.stub.calls), 1)
+
+    def test_reply_never_mentions_someone_outside_the_project(self):
+        project = str(json.load(open(os.path.join(self.cfgdir, "config.json")))["project"])
+        self.stub.pingable = [{"id": 1, "name": "Caleb LeNoir", "attachable_sgid": "sg-caleb"},
+                              {"id": 9, "name": "Randy Outsider", "attachable_sgid": "sg-randy"}]
+        self.stub.project_people = {project: [{"id": 1, "name": "Caleb LeNoir"}, {"id": ACTING, "name": "Agent"}]}
+        self.stub.lines["77"].append(line(2))
+        self.sync().main([])
+        self.assertTrue(self.sync().reply(2, "@Caleb, ask @Randy or @Randy.Outsider."))
+        tag = '<bc-attachment sgid="sg-caleb" content-type="application/vnd.basecamp.mention"></bc-attachment>'
+        self.assertEqual(self.stub.chat_posts(), [("77", f"<div>{tag}, ask @Randy or @Randy.Outsider.</div>")])
+        self.assertEqual(self.stub.calls.count(["api", "get", f"/projects/{project}/people.json"]), 1)
+
+    def test_reply_keeps_at_names_as_text_when_the_project_people_cannot_be_read(self):
+        project = str(json.load(open(os.path.join(self.cfgdir, "config.json")))["project"])
+        self.stub.pingable = [{"id": 1, "name": "Caleb LeNoir", "attachable_sgid": "sg-caleb"}]
+        self.stub.project_people = {project: None}
+        self.stub.lines["77"].append(line(2))
+        self.sync().main([])
+        self.assertTrue(self.sync().reply(2, "@Caleb done."))
+        self.assertEqual(self.stub.chat_posts(), [("77", "<div>@Caleb done.</div>")])
+
+    def test_reply_in_another_projects_chat_mentions_only_that_projects_people(self):
+        self.stub.pingable = [{"id": 1, "name": "Caleb LeNoir", "attachable_sgid": "sg-caleb"},
+                              {"id": 9, "name": "Randy Outsider", "attachable_sgid": "sg-randy"}]
+        self.stub.project_people = {"555": [{"id": 9, "name": "Randy Outsider"}]}
+        state = json.load(open(os.path.join(self.cfgdir, "chats.json")))
+        state["77"]["bucket"] = 555
+        json.dump(state, open(os.path.join(self.cfgdir, "chats.json"), "w"))
+        self.stub.lines["77"].append(line(2))
+        self.sync().main([])
+        self.assertTrue(self.sync().reply(2, "@Caleb, ask @Randy."))
+        tag = '<bc-attachment sgid="sg-randy" content-type="application/vnd.basecamp.mention"></bc-attachment>'
+        self.assertEqual(self.stub.chat_posts(), [("77", f"<div>@Caleb, ask {tag}.</div>")])
+        self.assertIn(["api", "get", "/projects/555/people.json"], self.stub.calls)
+
+    def test_reply_without_at_names_reads_no_people(self):
+        self.stub.lines["77"].append(line(2))
+        self.sync().main([])
+        self.sync().reply(2, "Mail x@y.io.")
+        self.assertEqual(self.stub.chat_posts(), [("77", "<div>Mail x@y.io.</div>")])
+        self.assertNotIn(["people", "pingable"], [c[:2] for c in self.stub.calls])
+        self.assertFalse(any(c[:2] == ["api", "get"] and c[2].endswith("/people.json") for c in self.stub.calls))
+
     def test_chat_reply_failure_keeps_eyes(self):
         self.stub.lines["77"].append(line(2))
         self.sync().main([])
@@ -1121,6 +1189,41 @@ class RenderReply(unittest.TestCase):
                          "<div><strong>Today</strong></div><div>Did:</div><ul><li>one</li><li>two</li></ul>"
                          "<ol><li>first</li><li>second</li></ol><blockquote>quoted</blockquote>"
                          "<pre>x &lt; y<br>  z</pre><div>after</div>")
+
+    def test_mentions_outside_code_links_and_emails(self):
+        tags = {"Caleb.LeNoir": "<M1>", "Fitz": "<M2>"}
+        body = sync.render_reply("@Caleb.LeNoir, **@Fitz**'s turn.\n- see https://x.io/@Fitz and [@Fitz](https://x.io)\n"
+                                 "> me@Fitz.io `@Fitz`\n```\n@Fitz\n```", tags.get)
+        self.assertEqual(body, '<div><M1>, <strong><M2></strong>&#x27;s turn.</div><ul><li>see '
+                               '<a href="https://x.io/@Fitz">https://x.io/@Fitz</a> and <a href="https://x.io">@Fitz</a>'
+                               '</li></ul><blockquote>me@Fitz.io @Fitz</blockquote><pre>@Fitz</pre>')
+        self.assertEqual(sync.render_reply("@Fitz"), "<div>@Fitz</div>")
+
+    def test_no_mentions_in_quotes(self):
+        tags = {"Fitz": "<M2>"}.get
+        self.assertEqual(sync.render_reply("> @Fitz can you check?\n>@Fitz\n\n@Fitz", tags),
+                         "<blockquote>@Fitz can you check?</blockquote><blockquote>@Fitz</blockquote><div><M2></div>")
+        self.assertEqual(sync.render_reply("<blockquote>@Fitz said</blockquote> @Fitz", tags),
+                         "<div>&lt;blockquote&gt;@Fitz said&lt;/blockquote&gt; @Fitz</div>")
+        self.assertEqual(sync.render_reply("<BLOCKQUOTE cite='x'>\n@Fitz said\n</blockquote>\n\n@Fitz", tags),
+                         "<div>&lt;BLOCKQUOTE cite=&#x27;x&#x27;&gt;<br>@Fitz said<br>&lt;/blockquote&gt;</div><div><M2></div>")
+        self.assertEqual(sync.render_reply("- <blockquote>@Fitz\n- still quoted</blockquote>\n- @Fitz", tags),
+                         "<ul><li>&lt;blockquote&gt;@Fitz</li><li>still quoted&lt;/blockquote&gt;</li><li><M2></li></ul>")
+        self.assertEqual(sync.render_reply("Use `<blockquote>` for quotes, @Fitz.\n\n@Fitz please check.", tags),
+                         "<div>Use &lt;blockquote&gt; for quotes, <M2>.</div><div><M2> please check.</div>")
+
+    def test_mentions_inside_emphasis_but_not_in_emails(self):
+        tags = {"Caleb.LeNoir": "<M1>", "Fitz": "<M2>"}
+        body = sync.render_reply("__@Caleb.LeNoir__ _@Fitz_ *@Fitz* ~~@Fitz~~ @Fitz-, snake_case@Fitz.io a_@Fitz.io "
+                                 "b__@Fitz.io `_@Fitz_`", tags.get)
+        self.assertEqual(body, "<div><strong><M1></strong> <em><M2></em> <em><M2></em> <strike><M2></strike> <M2>-, "
+                               "snake_case@Fitz.io a_@Fitz.io b__@Fitz.io _@Fitz_</div>")
+
+    def test_mentions_with_apostrophes(self):
+        tags = {"Sean.O'Connor": "<M1>", "Fitz": "<M2>"}
+        body = sync.render_reply("@Sean.O'Connor, @Sean.O’Connor's and @Fitz's or @Fitz’s turn, @Sean.O'Nobody",
+                                 lambda h: tags.get(h.replace("’", "'")))
+        self.assertEqual(body, "<div><M1>, <M1>&#x27;s and <M2>&#x27;s or <M2>’s turn, @Sean.O&#x27;Nobody</div>")
 
     def test_no_raw_html_or_newlines(self):
         body = sync.render_reply("<script>x</script>\n- <i>a</i>\n\n**<b>**")
