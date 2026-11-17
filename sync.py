@@ -44,7 +44,10 @@ Deterministic, no model calls. Safety bounds, enforced here:
     session is down and inbox notes wait (once per outage), and, with "timesheet", one
     timesheet entry per piece of work per finished day (timesheet.json keeps each one posted);
   - only the explicit commands post, run by the agent, and each refuses to when no
-    profile is set or the profile signs in as the owner;
+    profile is set or the profile signs in as the owner or as anyone but the agent;
+  - a timer run signed in as anyone but the agent ("agent" in the config, which init
+    records) does nothing: it reads only /my/profile.json, writes no state and logs one
+    FAILED line naming both people (hourly while it lasts);
   - id maps (map.json, todos.json, ...) make re-runs update or skip instead of
     duplicating.
 All runtime state lives in the directory that holds the config file, except each config's
@@ -545,6 +548,12 @@ def cli(argv=None, runner=subprocess.run):
     a = ap.parse_args(argv)
     s = Sync(a.home, a.config, dry=a.dry_run, runner=runner, prereleases=a.include_prereleases)
     try:
+        # Signed in as anyone but the agent, the run does nothing at all: no reads that move a cursor, no boosts, no
+        # marking read, no records, no state files (a run once read another person's notifications and Pings this way).
+        wrong = s.wrong_login()
+        if wrong:
+            (print if s.dry else s.log_hourly)(f"FAILED {wrong}")
+            return 1
         with s.locked("sync"):
             if not s.claim(allow=a.allow_duplicate):
                 return 1

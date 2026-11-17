@@ -74,6 +74,7 @@ import argparse, hashlib, json, os, re, subprocess, sys
 from zoneinfo import ZoneInfo
 
 from behaviors import COLUMNS
+from tools import RELAY, ledger_agent
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CREATABLE = ("Figuring it out", "In progress", "Ready for QA")  # Triage, Not now and Done are built in
@@ -390,13 +391,21 @@ class Init:
             cfg_tables[board] = entry
         me = self.bc("api", "get", "/my/profile.json") or {}
         acting = me.get("id")
+        recorded = (self.existing() or {}).get("agent")
+        if recorded is None and self.existing() is not None:  # a home set up before init recorded the agent
+            recorded = ledger_agent(os.path.join(self.dir, RELAY), self.login)
+        if recorded is not None and str(recorded) != str(acting):
+            problems.append(f"the login {self.login} signs in as {me.get('name')} ({acting}), but this home's agent is "
+                            f"{recorded}; sign the login in as the agent (docs/firstmate-account.md), or remove "
+                            '"agent" from the config to make this person the agent')
         people = self.bc("api", "get", f"/projects/{self.project}/people.json") or []
         captain = self.find_captain(people, acting, problems)
         listened = self.find_people(people, acting, problems)
         operators = self.find_people(people, acting, problems, self.operator_args, "--operator")
         if problems:
             raise Refuse("init refused, nothing was written:\n  - " + "\n  - ".join(problems))
-        cfg = {"account": self.account, "project": self.project, "captain": captain, "profile": self.login}
+        cfg = {"account": self.account, "project": self.project, "captain": captain, "profile": self.login,
+               **({"agent": acting} if isinstance(acting, int) else {})}
         # A re-run keeps the people and operators an existing config names besides these, unless --replace-people.
         kept = {} if self.replace_people or self.existing() is None else self.existing()
         kept_people = [p for p in kept.get("people") or [] if p != captain and p not in listened]

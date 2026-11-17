@@ -102,7 +102,7 @@ class FakeSystem:
 
 
 EXPECTED = {
-    "account": "1111111", "project": "22222222", "captain": CAPTAIN, "profile": "firstmate",
+    "account": "1111111", "project": "22222222", "captain": CAPTAIN, "profile": "firstmate", "agent": ACTING,
     "repos": {"Engine": "engine", "my-server": "server"},  # the registered spelling
     "chats": [700],
     "tables": {

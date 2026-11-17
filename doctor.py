@@ -337,6 +337,9 @@ class Doctor:
     @staticmethod
     def failure_fix(line):
         low = line.lower()
+        if "wrong login" in low or "login check" in low:
+            return ("Fix: the sign-in is not the agent's Basecamp person, so the sync does nothing. Sign in as the agent:\n"
+                    f"     run  {SETUP}  and sign in as the agent when it asks (docs/firstmate-account.md).")
         if "token refresh" in low or "unauthorized" in low or "401" in low or "auth" in low:
             return f"Fix: the Basecamp sign-in needs renewing; run  {SETUP}  and sign in again."
         if "timeout" in low or "timed out" in low:

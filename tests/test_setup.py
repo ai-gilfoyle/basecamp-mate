@@ -162,7 +162,7 @@ class SetupTest(Base):
     def test_defaults(self):
         self.assertEqual(self.setup(project=PROJECT, timezone="America/Chicago"), 0)
         cfg = json.load(open(self.config))
-        self.assertEqual(cfg, {"account": ACCOUNT, "project": PROJECT, "captain": CAPTAIN, "profile": "firstmate",
+        self.assertEqual(cfg, {"account": ACCOUNT, "project": PROJECT, "captain": CAPTAIN, "profile": "firstmate", "agent": ACTING,
                                "chats": [700], "todos": {"todoset": "800"},
                                "checkins": {"questionnaires": ["900"], "timezone": "America/Chicago"}, "blocked": {},
                                "acknowledge": {"read": "👀", "decided": "👍"}})
@@ -182,7 +182,7 @@ class SetupTest(Base):
         self.assertEqual(self.setup(project=f"https://app.basecamp.com/{ACCOUNT}/projects/{PROJECT}",
                                     chat=False, todos=False, checkins=False, reports=True), 0)
         cfg = json.load(open(self.config))
-        self.assertEqual(cfg, {"account": ACCOUNT, "project": PROJECT, "captain": CAPTAIN, "profile": "firstmate",
+        self.assertEqual(cfg, {"account": ACCOUNT, "project": PROJECT, "captain": CAPTAIN, "profile": "firstmate", "agent": ACTING,
                                "message_board": "9", "blocked": {}, "acknowledge": {"read": "👀", "decided": "👍"}})
         self.assertEqual(self.stub.writes(), [])
         self.assertEqual(list(self.system.units), [init_home.unit_name(self.home)])

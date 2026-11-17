@@ -14,7 +14,8 @@ python3 sync.py init https://app.basecamp.com/<account>/projects/<project> --log
 tables in the project's dock, each matched to a backlog repo by its title
 (case-insensitive, surrounding spaces ignored) against the names in the home's
 `data/projects.md`; each table's columns by their exact names; the login's own identity
-(`/my/profile.json`); the captain; the chats in the dock; and, when the dock has one
+(`/my/profile.json`), recorded as `agent` for [the agent check](running.md#the-agent-check)
+(a re-run signed in as a different person is refused); the captain; the chats in the dock; and, when the dock has one
 Message Board, `releases`: its id and the GitHub repo behind each mapped repo's
 `<home>/projects/<repo>` origin (renames followed through `gh repo view`), named by its
 board. A repo's `note` is added by hand. `--captain <person id or

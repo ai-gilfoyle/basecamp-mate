@@ -39,14 +39,39 @@ minutes (by the token's own `expires_at`) and guards the login the `basecamp` CL
   one `network:` line marks when the outage starts and one when it ends.
 
 A failed renewal logs its `FAILED token refresh` line once per cause and then hourly, not
-every run. A run first claims what its config watches and refuses to
+every run. A run then makes [the agent check](#the-agent-check), and next claims what its config watches and refuses to
 run beside another home's live run on the same thing with the same login;
 `--allow-duplicate` overrides that for one run (see [One home per project and login](multiple-homes.md)).
+
+## The agent check
+
+A sign-in can be given to the wrong person: after a login outage, someone approves
+`basecamp auth login -P <profile>` in a browser signed in as themselves. Before anything
+else, each timer run reads `/my/profile.json` and compares its id with the config's `agent`
+(see [Config and state](config.md)). If the profile signs in as anyone else, the run does
+nothing more: it reads no notifications, Pings or threads, boosts nothing, marks nothing
+read, writes no record, inbox note, state file or run claim, and exits 1. It logs one line
+that names both people and the command to sign in again:
+
+```
+FAILED wrong login: the sign-in firstmate is Jay Park (50519852), not the agent (52942343), so nothing ran and no state changed; sign in as the agent: BASECAMP_NO_KEYRING=1 basecamp auth login -P firstmate --device-code
+```
+
+A run that cannot read `/my/profile.json` at all is skipped the same way, with a
+`FAILED login check` line. A line is logged again only when it is an hour old or another
+line came after it in `sync.log`, so the wake check fires once, not every 30 seconds, and
+`basecamp-mate doctor` names the fix. When the right person signs in again, the next run carries on from the state the last
+good run left. The commands that post (`reply`, `dismiss`, `ask`, `answer`, `todo
+create|comment|complete|subtask`, `decide` and `post-message`) make the same check and post
+nothing as anyone but the agent. Without `agent` in the config, the first agent id the
+relay ledger wrote for the profile is used, so a home set up before `init` recorded it is
+checked too. With neither, nothing is checked.
 
 ## A dedicated Basecamp user
 
 To act as its own user instead of the captain, invite that user to the project, sign it
-in as a separate CLI login, verify it, and set `"profile"` in the config:
+in as a separate CLI login, verify it, and set `"profile"` and `"agent"` (its person id) in
+the config:
 
 ```sh
 basecamp auth login -P firstmate --account <account id>

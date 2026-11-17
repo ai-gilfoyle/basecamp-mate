@@ -84,6 +84,13 @@ a profile; `tests/test_runs.py` covers the run guard: claiming, refusing and nam
 home's live overlapping run (project, login by person or profile, Pings), logging it once
 then hourly, stale, removed and recycled-pid claims, the override, dry runs, commands,
 `sync.py status`, and `doctor`'s overlap check;
+`tests/test_login_guard.py` covers the agent check: a run signed in as someone other than
+the agent reads only `/my/profile.json` and writes no state (an established home and a new
+one), a matching sign-in runs as before, the FAILED line once and then hourly, an unreadable
+profile skipped, a dry run that only prints, the relay ledger's first agent id for the
+profile used when the config has no `agent`, `post-message` refused as someone else, a bad
+`agent` value refused, `init` recording the agent and refusing a re-run signed in as
+someone else, and `doctor`'s fix for the line;
 `tests/test_login.py` covers the login guard (`sync.py renew`) with a stubbed `basecamp auth`
 and a temporary `credentials.json`: a renewal that empties the file restored from the
 backup, a network-down run leaving the file untouched, only the lost profile put back beside

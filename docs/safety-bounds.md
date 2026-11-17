@@ -1,5 +1,9 @@
 # Safety bounds
 
+- A timer run whose `profile` signs in as anyone but the agent (`agent` in the config) does
+  nothing: it reads only `/my/profile.json`, writes no state and logs one FAILED line
+  naming both people, hourly while it lasts. The commands post nothing then. See
+  [The agent check](running.md#the-agent-check).
 - Only the configured account, project, card tables, chats, check-ins, to-do set and
   message board are touched, and the chats the agent watches with `sync.py watch`, and, with `pings` on, the Pings the acting login is in with
   the owner; with `assigned_todos` on, the project's to-dos assigned to the acting login are

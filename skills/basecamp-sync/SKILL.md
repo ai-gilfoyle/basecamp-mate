@@ -41,7 +41,7 @@ is the shipped default.
 
 A person setting a home up by hand runs `$SYNC/bin/basecamp-mate setup`: a guided, plain-language
 setup (sign-in with a link and code, project picker, yes/no questions) that ends in the same
-`init`. To run it yourself without questions, pass `--answers <file.json>` (keys: `home`,
+`init`, which records the login's person id as the config's `agent`. To run it yourself without questions, pass `--answers <file.json>` (keys: `home`,
 `login`, `project` id or URL, `captain` person id, `timezone`, and `true`/`false` for `chat`,
 `todos`, `checkins`, `cards`, `releases`, `reports`, `pings`, `inbox`, `session_alert`); it refuses
 instead of asking when the login is not signed in. `$SYNC/bin/basecamp-mate doctor` checks
@@ -393,6 +393,10 @@ that read.
   `BASECAMP_NO_KEYRING=1 basecamp auth login -P <profile> --device-code` (or `basecamp-mate setup`),
   which only the captain can do, so relay it. `FAILED duplicate run` means another home
   holds this project and login (see "One home per project and login"); relay it.
+  `FAILED wrong login` means the login is signed in as someone other than the agent (the
+  config's `agent`): the sync did nothing and changed no state, and the commands that post
+  refuse to. Never edit `agent` to match; relay it so the captain signs the login in again as
+  the agent (`FAILED login check`: who it signs in as could not be read; the same applies).
 
 The main firstmate's own home answers its questions itself rather than relaying.
 

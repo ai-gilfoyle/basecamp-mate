@@ -69,6 +69,22 @@ class BasecampError(RuntimeError):
         self.code, self.error = code, error or ""
 
 
+def ledger_agent(path, profile):
+    """The first agent id the relay ledger at `path` wrote for `profile`, or None."""
+    try:
+        with open(path) as f:
+            for line in f:
+                try:
+                    agent = json.loads(line).get("agent") or {}
+                except (ValueError, AttributeError):
+                    continue
+                if agent.get("profile") == profile and isinstance(agent.get("id"), int) and not isinstance(agent["id"], bool):
+                    return agent["id"]
+    except OSError:
+        pass
+    return None
+
+
 class Tools:
     def __init__(self, home, config_path, dry=False, runner=subprocess.run):
         self.home = os.path.abspath(home)
@@ -135,6 +151,12 @@ class Tools:
         self.ack_read = ((ack or {}).get("read") or "").strip() or None
         self.ack_decided = ((ack or {}).get("decided") or "").strip() or None
         self.profile = cfg.get("profile")
+        # "agent": the agent's own Basecamp person id, which the profile must sign in as (init records it). A run signed
+        # in as anyone else does nothing (wrong_login).
+        agent = cfg.get("agent")
+        if agent is not None and (isinstance(agent, bool) or not str(agent).strip().isdigit()):
+            raise ValueError('config "agent" must be the agent\'s Basecamp person id')
+        self.agent_id = int(agent) if agent is not None else None
         self.ask_chat = str(cfg["ask_chat"]) if cfg.get("ask_chat") is not None else None
         self.checkins = cfg.get("checkins")
         self.todos = cfg.get("todos")
@@ -164,6 +186,7 @@ class Tools:
         self.dry, self.run = dry, runner
         self._acting = False  # acting person id once resolved; None when it can't be
         self._acting_sgid = None  # the acting person's mention sgid, to spot @mentions in chat
+        self._acting_name = None  # the acting person's name, for the wrong-login line
         self._pingable = None  # the people the acting login can @mention, read once a run when a reply first needs them
         self._bucket_people = {}  # project id -> the ids of its people, read once a run when a chat reply first needs them
         self._received = False  # this run's read of the acting person's received boosts, by id; None when it failed
@@ -367,19 +390,63 @@ class Tools:
             if self.profile:
                 try:
                     me = self.bc("api", "get", "/my/profile.json") or {}
-                    self._acting, self._acting_sgid = me.get("id"), me.get("attachable_sgid")
+                    self._acting, self._acting_sgid, self._acting_name = me.get("id"), me.get("attachable_sgid"), me.get("name")
                 except RuntimeError as e:
                     self.log(f"acting identity unknown, acknowledgement boosts wait for the next run: {e}")
                     self._acting = "retry"
         return self._acting
 
+    def expected_agent(self):
+        """The person id the profile must sign in as: the config's "agent", else, for a home set up before init recorded
+        it, the first agent id the relay ledger wrote for this profile (the ledger began after the login was checked by
+        hand); None when neither names one, and the login is not checked."""
+        if self.agent_id is not None or not self.profile:
+            return self.agent_id
+        return ledger_agent(self.path(RELAY), self.profile)
+
+    def wrong_login(self):
+        """Why nothing may run as this login, or None: the profile signs in as someone other than the agent (or who it
+        signs in as could not be read). Reads only /my/profile.json, once a run; writes nothing."""
+        want = self.expected_agent()
+        if not self.profile or want is None:
+            return None
+        me = self.acting_id()
+        relogin = f"sign in as the agent: BASECAMP_NO_KEYRING=1 basecamp auth login -P {self.profile} --device-code"
+        if me == "retry":
+            return (f"login check: could not read who the sign-in {self.profile} is (/my/profile.json), so nothing ran; "
+                    f"if it keeps failing, {relogin}")
+        if me != want:
+            who = f"{self._acting_name} ({me})" if self._acting_name else str(me)
+            return (f"wrong login: the sign-in {self.profile} is {who}, not the agent ({want}), so nothing ran and no "
+                    f"state changed; {relogin}")
+        return None
+
+    def log_hourly(self, msg):
+        """Log `msg` unless sync.log already ends with it from within the last hour: a refused run repeats it every 30
+        seconds, and each new FAILED line wakes the agent. Writes only sync.log."""
+        try:
+            with open(self.path("sync.log"), "rb") as f:
+                f.seek(max(0, os.path.getsize(self.path("sync.log")) - 4096))
+                last = (f.read().decode("utf-8", "replace").strip().splitlines() or [""])[-1]
+            at = datetime.strptime(last[:20], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+            if last[21:] == msg and (datetime.now(timezone.utc) - at).total_seconds() < 3600:
+                return
+        except (OSError, ValueError):
+            pass
+        self.log(msg)
+
     def refused(self, what, who="captain"):
-        """True (logged) when a command must not post: no profile, or the profile is the owner."""
+        """True (logged) when a command must not post: no profile, the profile is the owner, or it is not the agent."""
         me = self.acting_id()
         if me == "retry":
             raise RuntimeError("acting identity unknown")
         if me is None or me == self.captain:
             self.log(f"{what}: acting user is the {who} or unset, not posting")
+            return True
+        want = self.expected_agent()
+        if want is not None and me != want:
+            self.log(f"{what}: the sign-in {self.profile} is {self._acting_name or me} ({me}), not the agent ({want}), "
+                     "not posting")
             return True
         return False
 
