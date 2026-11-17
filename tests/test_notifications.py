@@ -282,6 +282,19 @@ class Threads(NotifBase):
         self.assertEqual(self.state("threads.json")[f"{PROJECT}:4"]["cursor"], 1105)
         self.assertEqual(self.stub.marked, [["10"], ["10"]])
 
+    def test_a_thread_read_the_cli_reports_incomplete_is_neither_marked_nor_advanced_and_is_retried(self):
+        self.stub.comments["4"] = [self.doc_comment(1100, who=1, content="<p>noted</p>"), self.doc_comment(1101)]
+        self.notify(note(10, thread=4, anchor=1101, path="documents", title="Re: Roadmap"))
+        self.stub.cut.add("4")
+        self.poll()
+        self.assertEqual((self.pending(), self.stub.marked), ([], []))
+        self.assertNotIn(f"{PROJECT}:4", self.state("threads.json"))
+        self.assertIn("incomplete", self.log())
+        self.stub.cut.clear()
+        self.poll()
+        self.assertEqual([(r["kind"], r["comment"]) for r in self.pending()], [("mention", 1101)])
+        self.assertEqual(self.stub.marked, [["10"]])
+
     def test_a_mention_is_a_mention_record(self):
         self.stub.comments["4"] = [self.doc_comment(9, content="<p>@Agent can you check this?</p>")]
         self.notify(note(10, "Mention", thread=4, anchor=9, path="documents"))

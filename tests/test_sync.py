@@ -26,6 +26,7 @@ class Stub:
         self.marked = []  # the ids of each `notifications read` call
         self.pingable = []  # `people pingable`: the people the acting login can @mention; None fails it, an exception is raised
         self.project_people = {}  # bucket id -> its /projects/<id>/people.json; a bucket not listed has everyone pingable
+        self.cut = set()  # recording ids whose `comments list` the CLI cuts short: one comment missing, and a notice
 
     def __call__(self, cmd, **kw):
         if cmd[0] == "lavish-axi":
@@ -49,6 +50,9 @@ class Stub:
         elif args[:2] == ["comments", "list"]:  # like the CLI: only the oldest 100 without --all
             data = self.comments.get(args[2], [])
             data = data if "--all" in args else data[:100]
+            if args[2] in self.cut:
+                notice = f"Showing {len(data) - 1} of {len(data)} results"
+                return SimpleNamespace(stdout=json.dumps({"ok": True, "data": data[:-1], "notice": notice}), stderr="", returncode=0)
         elif args[:3] == ["api", "get", "/my/readings.json"]:
             data = self.readings
         elif args[:3] == ["api", "get", "/my/boosts.json"]:
