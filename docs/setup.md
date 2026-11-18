@@ -70,7 +70,8 @@ the failures-only wake check. `--session-alert [MINUTES]` (with `--inbox`) adds
 `"session_alert": {"chat": <the dock's first chat>, "after_minutes": MINUTES}` (default 15),
 refusing when the dock has no chat. `--listen` is still accepted and does nothing (notifications
 replaced the event listener); a config that differs from the discovered one only in a
-`"listen"` key is rewritten without it, no `--force` needed. `--pings` adds
+`"listen"` key is rewritten without it, no `--force` needed, unless that key still holds
+`"unmonitored": false`. `--pings` adds
 `"pings": {}`: the owner's Pings to the `--login` are relayed (see [Pings](pings.md)).
 `--assigned-todos` adds `"assigned_todos": {}`: a to-do the owner assigns to the
 `--login` is a request (see [To-do requests](todo-requests.md)). `--assigned-todos-anywhere` adds
