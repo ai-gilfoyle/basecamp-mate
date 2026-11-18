@@ -5,6 +5,7 @@ agent and refuses a re-run signed in as someone else.
 The basecamp CLI is stubbed; nothing touches the network.
 """
 import io, json, os, sys, unittest
+from unittest import mock
 from contextlib import redirect_stdout
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -117,6 +118,17 @@ class TimerRun(Base):
         for _ in range(2):
             self.run_timer()
         self.assertEqual(len(self.failed()), 2)
+
+    def test_the_sign_in_command_names_the_credential_store_the_run_used(self):
+        self.stub.me = OTHER
+        with mock.patch.dict(os.environ, {"BASECAMP_NO_KEYRING": "1"}):
+            self.run_timer()
+        with mock.patch.dict(os.environ):
+            os.environ.pop("BASECAMP_NO_KEYRING", None)
+            self.run_timer()
+        first, second = self.failed()
+        self.assertIn("uses: BASECAMP_NO_KEYRING=1 basecamp auth login -P agent", first)
+        self.assertIn("uses: basecamp auth login -P agent", second)
 
     def test_an_unreadable_profile_skips_the_run(self):
         self.stub.profile_fails = True
@@ -278,6 +290,15 @@ class Init(unittest.TestCase):
         with self.assertRaises(init_home.Refuse):
             self.init().main()
         self.assertNotIn("agent", json.load(open(cfg)))
+
+    def test_an_old_listen_that_still_turns_unmonitored_off_is_never_migrated_without_force(self):
+        cfg = self.older_config()
+        old = json.load(open(cfg)) | {"listen": {"unmonitored": False}}
+        json.dump(old, open(cfg, "w"))
+        with self.assertRaises(init_home.Refuse) as e:
+            self.init().main()
+        self.assertIn('add the verified "agent" id to the existing config by hand', str(e.exception))
+        self.assertEqual(json.load(open(cfg)), old)
 
     def test_an_older_config_gains_the_agent_given_without_force(self):
         self.older_config()

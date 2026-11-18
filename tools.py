@@ -391,9 +391,11 @@ class Tools:
         if self.agent_id is None:
             return (f'login check: the config has no "agent", so nothing ran; add "agent": <the agent\'s Basecamp person '
                     f'id> to {self.config_path} by hand, which keeps every other setting (re-running init with --agent <id> '
-                    'adds it only when init reproduces the rest of the config)')
-        relogin = ("sign in again as the agent, in the credential store this feed uses: basecamp auth login"
-                   + (f" -P {self.profile}" if self.profile else ""))
+                    'adds it only when init reproduces the rest of the config, and never over an old "listen" with '
+                    '"unmonitored": false)')
+        relogin = ("sign in again as the agent, in the credential store this feed uses: "
+                   + ("BASECAMP_NO_KEYRING=1 " if os.environ.get("BASECAMP_NO_KEYRING") else "")
+                   + "basecamp auth login" + (f" -P {self.profile}" if self.profile else ""))
         try:
             me = self.bc("api", "get", "/my/profile.json") or {}
         except RuntimeError as e:

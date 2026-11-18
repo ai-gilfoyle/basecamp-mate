@@ -55,15 +55,19 @@ file or run claim, and exits 1. It logs a line that names both people and the co
 sign in again:
 
 ```
-FAILED wrong login: the sign-in firstmate is Jay Park (50519852), not the agent (52942343), so nothing ran and no state changed; sign in again as the agent, in the credential store this feed uses: basecamp auth login -P firstmate
+FAILED wrong login: the sign-in firstmate is Jay Park (50519852), not the agent (52942343), so nothing ran and no state changed; sign in again as the agent, in the credential store this feed uses: BASECAMP_NO_KEYRING=1 basecamp auth login -P firstmate
 ```
+
+The command starts with `BASECAMP_NO_KEYRING=1` only when the run had it set (as `setup`
+installs the timer), so it signs in to the same credential store the feed reads.
 
 A run that cannot read `/my/profile.json` at all is skipped the same way, with a
 `FAILED login check` line, and so is a config without `agent`, with a `FAILED login check`
 line that says to add it by hand or to re-run `init` with `--agent <id>`. `init` adds it
 without `--force` only when the rest of the config matches what `init` discovers (apart
-from the retired `listen`); for a config with settings `init` cannot reproduce, such as
-`"notifications": {"mark_read": false}`, add the verified `agent` id to the existing config
+from a retired `listen` that no longer has any effect); for a config with settings `init`
+cannot reproduce, such as `"notifications": {"mark_read": false}` or an old
+`"listen": {"unmonitored": false}`, add the verified `agent` id to the existing config
 by hand, so those settings are kept. A dry run prints the line and writes nothing.
 When the right person signs in again, the next run carries on from the state the last good
 run left. `backup`, `timesheet post` and `watch` make the same check, before and inside the

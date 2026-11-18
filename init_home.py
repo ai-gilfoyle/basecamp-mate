@@ -398,7 +398,8 @@ class Init:
                             f"{agent}; sign the login in as the agent (docs/firstmate-account.md)")
         elif agent is None:
             self.notes.append('no "agent" in the config: the sync does nothing until it names the agent\'s person id; '
-                              "re-run with --agent <id>")
+                              're-run with --agent <id>, or add "agent" to the existing config by hand when it has '
+                              'settings init cannot reproduce (such as "listen": {"unmonitored": false})')
         people = self.bc("api", "get", f"/projects/{self.project}/people.json") or []
         captain = self.find_captain(people, acting, problems)
         listened = self.find_people(people, acting, problems)
@@ -681,10 +682,12 @@ class Init:
         config_path = os.path.join(self.dir, "config.json")
         existing = json.load(open(config_path)) if os.path.exists(config_path) else None
         plan = []
-        # A config that differs only in the retired "listen", or in the "agent" an earlier version did not record, is
-        # rewritten without --force.
+        # A config that differs only in the retired "listen" (unless its "unmonitored": false still applies), or in the
+        # "agent" an earlier version did not record, is rewritten without --force.
         unrecorded = existing is not None and "agent" not in existing and "agent" in cfg
-        retired = (existing is not None and ("listen" in existing or unrecorded)
+        active_listen = (existing is not None and isinstance(existing.get("listen"), dict)
+                         and existing["listen"].get("unmonitored") is False)
+        retired = (existing is not None and not active_listen and ("listen" in existing or unrecorded)
                    and {k: v for k, v in existing.items() if k != "listen"}
                    == {k: v for k, v in cfg.items() if not (unrecorded and k == "agent")})
         if retired and "listen" in existing:
@@ -702,7 +705,10 @@ class Init:
             fields = diff_fields(existing, cfg)
             if not self.force:
                 msg = (f"{config_path} already exists and differs in: {', '.join(fields)}. "
-                       "Check the discovered config; pass --force to replace it.")
+                       "Check the discovered config; pass --force to replace it."
+                       + (' To keep settings init cannot reproduce (here "listen": {"unmonitored": false}), add the '
+                          'verified "agent" id to the existing config by hand instead.' if active_listen and unrecorded
+                          else ""))
                 if not self.dry:
                     raise Refuse(msg + "\n" + json.dumps(cfg, indent=1))
                 plan.append("REFUSE: " + msg)
