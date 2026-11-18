@@ -100,7 +100,8 @@ Lavish call goes through a tool), and tools never decide whether to run or what 
 with what they read. `sync.py behaviors --home <home> --config <config.json>` lists which
 behaviors a config turns on and how often each runs.
 
-Every piece shares `account`, `project`, `captain` (the owner's person id) and the optional
-`profile`. A config without `tables` (or with `"cards": false`) never reads the backlog,
-never calls a card or card-table endpoint, and never writes `map.json`; the other
+Every piece shares `account`, `project`, `captain` (the owner's person id), `agent` (the
+agent's person id, which the login must sign in as) and the optional `profile`. A config
+without `tables` (or with `"cards": false`) never reads the backlog, never calls a card or
+card-table endpoint, and never writes `map.json`; the other
 behaviors run the same either way. Set such a home up with `sync.py init --no-cards`.

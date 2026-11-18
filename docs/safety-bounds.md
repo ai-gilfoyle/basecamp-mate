@@ -1,5 +1,12 @@
 # Safety bounds
 
+- A timer run, `backup`, `timesheet post`, `watch` or any command that posts (`reply`,
+  `dismiss`, `todo` but `show`, `decide`, `ask`, `answer`, `post-message`, `schedule set`,
+  `unmonitored handle`) whose login signs in as anyone but the agent (`agent` in the
+  config), or whose config has no `agent`, does nothing: it reads only `/my/profile.json`,
+  writes no state and logs a FAILED line, once per cause and then at most hourly. The
+  login backup (`sync.py renew`) copies, and so restores, only a login confirmed to sign in
+  as the agent. See [The agent check](running.md#the-agent-check).
 - Only the configured account, project, card tables, chats, check-ins, to-do set and
   message board are touched, and the chats the agent watches with `sync.py watch`, and, with `pings` on, the Pings the acting login is in with
   the owner; with `assigned_todos` on, the project's to-dos assigned to the acting login are

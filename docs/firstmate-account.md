@@ -24,9 +24,12 @@ Run the sync as its own Basecamp user instead of the owner's. Ids below are plac
    renews it unattended, and `run.sh` does that when it is within 15 minutes of expiry
    (`sync.py renew`, inside its 240-second cap). That step backs up the saved login
    first and restores it if a renewal loses it; see [Run it once](running.md#run-it-once).
-6. **Configure the sync.** Set `"profile": "firstmate"` in the config. Keep `"captain"` as
-   your own person id: it is who cards are assigned to and whose comments and 👍 count. The
-   firstmate user's own comments and boosts are ignored.
+6. **Configure the sync.** Set `"profile": "firstmate"` in the config, and `"agent"` to the
+   firstmate user's person id from step 4 (`init --agent <id>` and `setup` record it). Keep
+   `"captain"` as your own person id: it is who cards are assigned to and whose comments and
+   👍 count. The firstmate user's own comments and boosts are ignored. If the login is later
+   signed in as anyone else, the sync does nothing until the firstmate user signs in again
+   ([the agent check](running.md#the-agent-check)).
 7. **What changes for you.** Card changes show as made by the firstmate user, and you now
    get Basecamp notifications when a card is assigned to you (Basecamp does not notify people
    about assignments they make themselves).

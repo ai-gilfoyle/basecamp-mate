@@ -7,7 +7,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from types import SimpleNamespace
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from test_sync import Base  # noqa: E402
+from test_sync import ACTING, Base  # noqa: E402
 import behaviors, doctor, init_home, sync  # noqa: E402
 
 BACKUP = {"project": 49118254, "vault": 10427170269}
@@ -27,7 +27,9 @@ class FolderStub:
         args = args[2:] if args[:1] == ["-P"] else args
         self.calls.append((args, cmd[-2]))
         data = None
-        if args[:2] == ["uploads", "list"]:
+        if args[:3] == ["api", "get", "/my/profile.json"]:
+            data = {"id": ACTING}
+        elif args[:2] == ["uploads", "list"]:
             data = [{"id": i, "filename": n, "title": n} for n, i in self.folder.items()]
         elif args[:2] == ["uploads", "create"]:
             name = os.path.basename(args[2])

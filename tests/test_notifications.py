@@ -88,7 +88,7 @@ class NotifBase(ToolBase):
     def setUp(self):
         super().setUp()
         self.stub = NotifStub()
-        self.cfg(profile="agent", todos={"todoset": "66"}, message_board="99", chats=[77])
+        self.cfg(profile="agent", agent=ACTING, todos={"todoset": "66"}, message_board="99", chats=[77])
         self.stub.lines = {"77": [line(1)]}
         self.poll()  # the first run seeds the chat cursor and the notifications
         self.stub.calls.clear()

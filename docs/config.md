@@ -31,6 +31,12 @@ or by hand from
   including `run.sh`'s token refresh. Absent means the CLI's default login. It changes
   only who acts; `captain` stays the assignee and the only person whose 👍 approves, and
   the acting user's own comments and boosts are never relayed.
+- `agent` (required): the agent's own Basecamp person id, a number: the person the login
+  (`profile`, or the CLI's default login) must sign in as. `init --agent <id>` (or
+  `setup`, which asks for it) writes it; nothing takes it from the login. A timer run,
+  `backup`, `timesheet post`, `watch` and the commands that post signed in as anyone else
+  do nothing, and without `agent` they do nothing either; the login backup keeps only a
+  login confirmed as `agent` (see [The agent check](running.md#the-agent-check)).
 - `todos` (optional): `{}`, `{"todoset": "<to-do set id>"}` or `{"list": "<to-do list id>"}`,
   with `"project": <id>` when they are in another project of the account (default: the
   configured project): where `sync.py todo create` puts the owner's to-dos by default

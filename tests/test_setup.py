@@ -148,6 +148,7 @@ class Base(unittest.TestCase):
 
     def setup(self, interactive=False, inputs=(), **answers):
         answers.setdefault("home", self.home)
+        answers.setdefault("agent", ACTING)
         feed = list(inputs)
         prompter = setup_home.Prompter(answers, interactive=interactive, inp=lambda q: feed.pop(0), out=self.printed.append)
         s = setup_home.Setup(prompter, runner=self.stub, system=self.system, which=lambda n: "/usr/bin/" + n,
@@ -162,7 +163,7 @@ class SetupTest(Base):
     def test_defaults(self):
         self.assertEqual(self.setup(project=PROJECT, timezone="America/Chicago"), 0)
         cfg = json.load(open(self.config))
-        self.assertEqual(cfg, {"account": ACCOUNT, "project": PROJECT, "captain": CAPTAIN, "profile": "firstmate",
+        self.assertEqual(cfg, {"account": ACCOUNT, "project": PROJECT, "captain": CAPTAIN, "profile": "firstmate", "agent": ACTING,
                                "chats": [700], "todos": {"todoset": "800"},
                                "checkins": {"questionnaires": ["900"], "timezone": "America/Chicago"}, "blocked": {},
                                "acknowledge": {"read": "👀", "decided": "👍"}})
@@ -182,7 +183,7 @@ class SetupTest(Base):
         self.assertEqual(self.setup(project=f"https://app.basecamp.com/{ACCOUNT}/projects/{PROJECT}",
                                     chat=False, todos=False, checkins=False, reports=True), 0)
         cfg = json.load(open(self.config))
-        self.assertEqual(cfg, {"account": ACCOUNT, "project": PROJECT, "captain": CAPTAIN, "profile": "firstmate",
+        self.assertEqual(cfg, {"account": ACCOUNT, "project": PROJECT, "captain": CAPTAIN, "profile": "firstmate", "agent": ACTING,
                                "message_board": "9", "blocked": {}, "acknowledge": {"read": "👀", "decided": "👍"}})
         self.assertEqual(self.stub.writes(), [])
         self.assertEqual(list(self.system.units), [init_home.unit_name(self.home)])
@@ -271,7 +272,7 @@ class SetupTest(Base):
     def test_cli_answers_file(self):
         answers = os.path.join(self.tmp, "answers.json")
         with open(answers, "w") as f:
-            json.dump({"home": self.home, "project": PROJECT, "checkins": False, "todos": False}, f)
+            json.dump({"home": self.home, "project": PROJECT, "agent": ACTING, "checkins": False, "todos": False}, f)
         rc = setup_home.cli(["--answers", answers], runner=self.stub, system=self.system,
                             which=lambda n: "/usr/bin/" + n, sync_dir=self.repo, out=self.printed.append)
         self.assertEqual(rc, 0)

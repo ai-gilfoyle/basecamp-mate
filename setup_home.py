@@ -42,7 +42,7 @@ QUESTIONS = (
     ("reports", "Let the agent post reports on the Message Board?", False),
     ("pings", "Relay your Pings (direct messages) to the agent?", False),
 )
-ANSWERS = ("home", "login", "account", "project", "captain", "timezone", "replace", "install_cli",
+ANSWERS = ("home", "login", "account", "project", "captain", "agent", "timezone", "replace", "install_cli",
            "inbox", "session_alert", *(k for k, _, _ in QUESTIONS))
 LABELS = {"chat": "chat inbox", "todos": "decision to-dos", "checkins": "check-in answers",
           "cards": "card mirror", "assign": "card assignment for decisions", "releases": "release announcements",
@@ -305,6 +305,15 @@ class Setup:
             [(str(p["id"]), p.get("name") + (f" <{p['email_address']}>" if p.get("email_address") else ""))
              for p in people]))
 
+    def pick_agent(self):
+        """The agent's person id, typed by the person setting up (or the "agent" answer): never taken from the login."""
+        me = self.bc.data("api", "get", "/my/profile.json") or {}
+        got = str(self.ask.text("agent", f"The login is signed in as {me.get('name')} ({me.get('id')}). If that is the "
+                                         "agent, type its person id to confirm:") or "").strip()
+        if not got.isdigit():
+            raise Stop(f"the agent's person id is a number, got {got!r}; run setup again")
+        return int(got)
+
     def choose_behaviors(self):
         self.out("\nA few questions about what the agent should do (press Enter for the suggested answer):")
         chosen = {}
@@ -384,6 +393,7 @@ class Setup:
         project = str(proj["id"])
         dock = proj.get("dock") or []
         captain = self.pick_captain(project)
+        agent = self.pick_agent()
         chosen = self.choose_behaviors()
         chosen["inbox"] = self.ask.yes("inbox", "Deliver each new message as a firstmate inbox note?", False)
         chosen["session_alert"] = chosen["inbox"] and self.ask.yes(
@@ -409,7 +419,7 @@ class Setup:
                 raise Stop("Nothing was changed.")
             backup = json.load(open(config)).get("backup")  # set by hand or --backup; setup keeps it
         printed = []
-        init = Init(f"https://app.basecamp.com/{account}/projects/{project}", login, home, captain=captain,
+        init = Init(f"https://app.basecamp.com/{account}/projects/{project}", login, home, captain=captain, agent=agent,
                     create_missing=chosen["cards"], force=force, cards=chosen["cards"], assign_captain=chosen["assign"], todos=chosen["todos"],
                     reports=chosen["reports"], checkins=timezone if chosen["checkins"] else None,
                     releases=chosen["releases"], inbox=chosen["inbox"],

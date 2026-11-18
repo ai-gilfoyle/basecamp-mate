@@ -72,6 +72,10 @@ class BasecampError(RuntimeError):
         self.code, self.error = code, error or ""
 
 
+class WrongLogin(RuntimeError):
+    """Nothing may run as this login: it is not the agent's (Tools.wrong_login)."""
+
+
 class Tools:
     def __init__(self, home, config_path, dry=False, runner=subprocess.run):
         self.home = os.path.abspath(home)
@@ -139,6 +143,12 @@ class Tools:
         self.ack_read = ((ack or {}).get("read") or "").strip() or None
         self.ack_decided = ((ack or {}).get("decided") or "").strip() or None
         self.profile = cfg.get("profile")
+        # "agent": the agent's own Basecamp person id, which the login must sign in as (init --agent records it). A run
+        # signed in as anyone else, or with no "agent", does nothing (wrong_login).
+        agent = cfg.get("agent")
+        if agent is not None and (isinstance(agent, bool) or not isinstance(agent, int)):
+            raise ValueError('config "agent" must be the agent\'s Basecamp person id, a number')
+        self.agent_id = agent
         self.ask_chat = str(cfg["ask_chat"]) if cfg.get("ask_chat") is not None else None
         self.checkins = cfg.get("checkins")
         self.todos = cfg.get("todos")
@@ -397,13 +407,49 @@ class Tools:
                     self._acting = "retry"
         return self._acting
 
+    def wrong_login(self):
+        """Why nothing may run as this login, or None: the config names no "agent", the login signs in as someone other
+        than the agent, or who it signs in as could not be read. Reads /my/profile.json afresh on each call (with a
+        profile, that read is the run's acting identity); writes nothing."""
+        login = f"the sign-in {self.profile}" if self.profile else "the default sign-in"
+        if self.agent_id is None:
+            return (f'login check: the config has no "agent", so nothing ran; add "agent": <the agent\'s Basecamp person '
+                    f'id> to {self.config_path} by hand, which keeps every other setting (re-running init with --agent <id> '
+                    'adds it only when init reproduces the rest of the config, and never over an old "listen" with '
+                    '"unmonitored": false)')
+        relogin = ("sign in again as the agent, in the credential store this feed uses: "
+                   + ("BASECAMP_NO_KEYRING=1 " if os.environ.get("BASECAMP_NO_KEYRING") else "")
+                   + "basecamp auth login" + (f" -P {self.profile}" if self.profile else ""))
+        try:
+            me = self.bc("api", "get", "/my/profile.json") or {}
+        except (RuntimeError, subprocess.TimeoutExpired) as e:
+            return (f"login check: could not read who {login} is (/my/profile.json: {e}), so nothing ran; if it keeps "
+                    f"failing, {relogin}")
+        if self.profile:
+            self._acting, self._acting_sgid = me.get("id"), me.get("attachable_sgid")
+        if me.get("id") != self.agent_id:
+            who = f"{me.get('name')} ({me.get('id')})" if me.get("name") else str(me.get("id"))
+            return (f"wrong login: {login} is {who}, not the agent ({self.agent_id}), so nothing ran and no state "
+                    f"changed; {relogin}")
+        return None
+
+    def require_login(self):
+        """Raise WrongLogin when nothing may run as this login (wrong_login)."""
+        why = self.wrong_login()
+        if why:
+            raise WrongLogin(why)
+
     def refused(self, what, who="captain"):
-        """True (logged) when a command must not post: no profile, or the profile is the owner."""
+        """True (logged) when a command must not post: no profile, the profile is the owner, or it is anyone but the
+        agent (the config's "agent"; the command's own login check, sync.py command(guard=True), refuses first)."""
         me = self.acting_id()
         if me == "retry":
             raise RuntimeError("acting identity unknown")
         if me is None or me == self.captain:
             self.log(f"{what}: acting user is the {who} or unset, not posting")
+            return True
+        if me != self.agent_id:
+            self.log(f"{what}: acting user {me} is not the agent ({self.agent_id}), not posting")
             return True
         return False
 

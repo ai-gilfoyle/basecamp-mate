@@ -154,7 +154,7 @@ class Registry:
         return [c for c in self.claims() if c.get("config") != config and same_login(mine, c) and live(c, now)
                 and token in (c.get("watches") or [])]
 
-    def claim(self, config, home, cfg, person, allow=False, dry=False, buckets=()):
+    def claim(self, config, home, cfg, person, allow=False, dry=False, buckets=(), verify=None):
         """Claim `cfg`'s watches for this run: the live overlapping claims of other configs, each with what it shares.
 
         Nothing is claimed when any overlap and `allow` is false; the caller refuses to run.
@@ -162,7 +162,7 @@ class Registry:
         over are removed. `buckets` are the projects of the chats this home watches (`sync.py
         watch`): never claimed and never an overlap; each one another live home on this login
         claims as its project is left in `self.held` (project id -> those claims), for the
-        caller to skip.
+        caller to skip. `verify`, when given, is called just before the claim is written and may raise to stop it.
         """
         config = os.path.realpath(config)
         mine = {"config": config, "home": os.path.abspath(home), "profile": cfg.get("profile") or "",
@@ -187,6 +187,8 @@ class Registry:
                             self.held.setdefault(str(b), []).append(c)
             if (others and not allow) or dry:
                 return others
+            if verify is not None:
+                verify()
             pid = os.getpid()
             mine.update(pid=pid, process_start=process_start(pid), last_run=now)
             tmp = self.file(config) + f".{pid}.tmp"

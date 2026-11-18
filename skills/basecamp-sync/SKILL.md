@@ -41,8 +41,8 @@ is the shipped default.
 
 A person setting a home up by hand runs `$SYNC/bin/basecamp-mate setup`: a guided, plain-language
 setup (sign-in with a link and code, project picker, yes/no questions) that ends in the same
-`init`. To run it yourself without questions, pass `--answers <file.json>` (keys: `home`,
-`login`, `project` id or URL, `captain` person id, `timezone`, and `true`/`false` for `chat`,
+`init`, which records the agent's person id (asked for, never taken from the login) as the config's `agent`. To run it yourself without questions, pass `--answers <file.json>` (keys: `home`,
+`login`, `project` id or URL, `captain` person id, `agent` person id, `timezone`, and `true`/`false` for `chat`,
 `todos`, `checkins`, `cards`, `releases`, `reports`, `pings`, `inbox`, `session_alert`); it refuses
 instead of asking when the login is not signed in. `$SYNC/bin/basecamp-mate doctor` checks
 everything (CLI, sign-in, project, card columns, notifications, the timer, last sync, wake check) and prints
@@ -51,7 +51,7 @@ each problem with its fix; it exits non-zero when something is broken.
 "Use this Basecamp project with the firstmate login" means:
 
 ```sh
-python3 $SYNC/sync.py init <project URL> --login firstmate --home <this home> --dry-run
+python3 $SYNC/sync.py init <project URL> --login firstmate --agent <the firstmate login's person id> --home <this home> --dry-run
 ```
 
 Read the printed config, then run it again without `--dry-run`. It refuses rather than
@@ -393,6 +393,15 @@ that read.
   `BASECAMP_NO_KEYRING=1 basecamp auth login -P <profile> --device-code` (or `basecamp-mate setup`),
   which only the captain can do, so relay it. `FAILED duplicate run` means another home
   holds this project and login (see "One home per project and login"); relay it.
+  `FAILED wrong login` means the login is signed in as someone other than the agent (the
+  config's `agent`): the sync did nothing and changed no state. Never edit `agent` to match;
+  relay it so the captain signs the login in again as the agent (`FAILED login check`: who it
+  signs in as could not be read, or the config has no `agent`; relay it the same way). While
+  it lasts, `reply`, `todo`, `decide`, `ask`, `answer`, `post-message`, `dismiss`,
+  `schedule set` and `unmonitored handle` refuse too (exit 1, the same line), so nothing is
+  posted under someone else's name; wait for the sign-in rather than retrying. The line is
+  logged once per cause and then hourly, and `login: the sign-in is the agent again` marks
+  the end.
 
 The main firstmate's own home answers its questions itself rather than relaying.
 

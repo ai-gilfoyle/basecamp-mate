@@ -7,14 +7,18 @@ way in. This page covers what it does underneath: `sync.py init`, the guided set
 ## Set up a home
 
 ```sh
-python3 sync.py init https://app.basecamp.com/<account>/projects/<project> --login firstmate --home <home> --dry-run
+python3 sync.py init https://app.basecamp.com/<account>/projects/<project> --login firstmate --agent <agent person id> --home <home> --dry-run
 ```
 
 `init` reads the project as the `--login` profile and discovers every id below: the card
 tables in the project's dock, each matched to a backlog repo by its title
 (case-insensitive, surrounding spaces ignored) against the names in the home's
 `data/projects.md`; each table's columns by their exact names; the login's own identity
-(`/my/profile.json`); the captain; the chats in the dock; and, when the dock has one
+(`/my/profile.json`), which must be the `--agent <person id>` given (or, on a re-run
+without it, the existing config's `agent`), recorded as `agent` for
+[the agent check](running.md#the-agent-check); a new home without `--agent` is refused,
+and an existing config without `agent` is left without it, so the sync does nothing until
+it is set; the captain; the chats in the dock; and, when the dock has one
 Message Board, `releases`: its id and the GitHub repo behind each mapped repo's
 `<home>/projects/<repo>` origin (renames followed through `gh repo view`), named by its
 board. A repo's `note` is added by hand. `--captain <person id or
@@ -66,7 +70,8 @@ the failures-only wake check. `--session-alert [MINUTES]` (with `--inbox`) adds
 `"session_alert": {"chat": <the dock's first chat>, "after_minutes": MINUTES}` (default 15),
 refusing when the dock has no chat. `--listen` is still accepted and does nothing (notifications
 replaced the event listener); a config that differs from the discovered one only in a
-`"listen"` key is rewritten without it, no `--force` needed. `--pings` adds
+`"listen"` key is rewritten without it, no `--force` needed, unless that key still holds
+`"unmonitored": false`. `--pings` adds
 `"pings": {}`: the owner's Pings to the `--login` are relayed (see [Pings](pings.md)).
 `--assigned-todos` adds `"assigned_todos": {}`: a to-do the owner assigns to the
 `--login` is a request (see [To-do requests](todo-requests.md)). `--assigned-todos-anywhere` adds
@@ -101,7 +106,8 @@ guided front end to `init` for people: it checks Python, the `basecamp` CLI (off
 installer; 0.12.0 or newer) and systemd user services; asks for the home; signs the login in with
 `basecamp profile create <login> --device-code` (or `auth login -P <login> --device-code`)
 under `BASECAMP_NO_KEYRING=1`; lists the login's accounts and projects to pick from and the
-project's people to pick the captain from; asks the yes/no questions (chat inbox, decision
+project's people to pick the captain from; asks for the agent's person id (shown beside the
+login's own, but typed, never taken from the login; `init` refuses when they differ); asks the yes/no questions (chat inbox, decision
 to-dos, check-ins on; card mirror, releases, reports, Pings off by default) and the
 check-in time zone, and, when inbox notes are chosen, whether to turn on the session alert
 (default yes, 15 minutes, in the dock's chat); enables or adds the dock tool each chosen behavior needs (to-do set,
@@ -110,7 +116,7 @@ repo that has none; then runs `init` itself (with `--create-missing-columns` onl
 mirror, `--force` after asking when the home already has a config, and `--no-keyring`), runs
 `run.sh` once as a test sync, and prints what is on and how to change it.
 `--answers <file.json>` answers by key (`home`, `login`, `account`, `project` (id or URL),
-`captain` (person id), `timezone`, `replace`, `install_cli`, and booleans `chat`, `todos`,
+`captain` (person id), `agent` (person id), `timezone`, `replace`, `install_cli`, and booleans `chat`, `todos`,
 `checkins`, `cards`, `releases`, `reports`, `pings`, `inbox`, `session_alert`) and `--yes` takes the
 defaults; without a terminal, anything that needs a person (a sign-in, an unanswered pick)
 refuses with what to do instead of asking.

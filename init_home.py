@@ -76,6 +76,7 @@ from zoneinfo import ZoneInfo
 from behaviors import COLUMNS
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
 CREATABLE = ("Figuring it out", "In progress", "Ready for QA")  # Triage, Not now and Done are built in
 CHECK_ID = "basecamp-sync"
 TIMER_SECONDS = 30  # the timer's period; each behavior's step runs at its own cadence inside it (behaviors.py)
@@ -250,7 +251,7 @@ class System:
 
 
 class Init:
-    def __init__(self, url, login, home, captain=None, listen_to=(), operators=(), participants_project=False,
+    def __init__(self, url, login, home, captain=None, agent=None, listen_to=(), operators=(), participants_project=False,
                  participants_domains=(), participants_company=None, repo_map=(), create_missing=False, dry=False,
                  force=False, cards=True, assign_captain=True, todos=False, reports=False, every_line=False, checkins=None, releases=True, inbox=False,
                  session_alert=None, pings=False, assigned_todos=False, assigned_anywhere=False, assigned_cards=False, assigned_steps=False, mentions_anywhere=False, advisories=(), backup=None, timesheet=False, chats=True,
@@ -258,6 +259,7 @@ class Init:
         self.account, self.project = parse_url(url)
         self.login, self.home = login, os.path.abspath(home)
         self.captain_arg, self.listen_to, self.operator_args = captain, list(listen_to), list(operators)
+        self.agent_arg = agent
         # participants_company: True admits the captain's company, False never; None keeps an existing config's setting,
         # and for a new home admits the company only on a team account.
         self.participants_project, self.participants_company = participants_project, participants_company
@@ -390,13 +392,22 @@ class Init:
             cfg_tables[board] = entry
         me = self.bc("api", "get", "/my/profile.json") or {}
         acting = me.get("id")
+        agent = self.agent_arg if self.agent_arg is not None else (self.existing() or {}).get("agent")
+        if agent is not None and agent != acting:
+            problems.append(f"the login {self.login} signs in as {me.get('name')} ({acting}), but the agent is "
+                            f"{agent}; sign the login in as the agent (docs/firstmate-account.md)")
+        elif agent is None:
+            self.notes.append('no "agent" in the config: the sync does nothing until it names the agent\'s person id; '
+                              're-run with --agent <id>, or add "agent" to the existing config by hand when it has '
+                              'settings init cannot reproduce (such as "listen": {"unmonitored": false})')
         people = self.bc("api", "get", f"/projects/{self.project}/people.json") or []
         captain = self.find_captain(people, acting, problems)
         listened = self.find_people(people, acting, problems)
         operators = self.find_people(people, acting, problems, self.operator_args, "--operator")
         if problems:
             raise Refuse("init refused, nothing was written:\n  - " + "\n  - ".join(problems))
-        cfg = {"account": self.account, "project": self.project, "captain": captain, "profile": self.login}
+        cfg = {"account": self.account, "project": self.project, "captain": captain, "profile": self.login,
+               **({"agent": agent} if agent is not None else {})}
         # A re-run keeps the people and operators an existing config names besides these, unless --replace-people.
         kept = {} if self.replace_people or self.existing() is None else self.existing()
         kept_people = [p for p in kept.get("people") or [] if p != captain and p not in listened]
@@ -664,14 +675,25 @@ class Init:
         if os.path.realpath(self.dir).startswith(os.path.realpath(self.sync_dir) + os.sep):
             raise Refuse(f"{self.dir} is inside this repo; the config lives in the home, never here")
         self.system.preflight(self.home)
+        if self.agent_arg is None and self.existing() is None:
+            raise Refuse("init refused, nothing was written: a new home needs --agent <the agent's Basecamp person id>, "
+                         f"the person the login {self.login} must sign in as")
         cfg, to_create = self.discover()
         config_path = os.path.join(self.dir, "config.json")
         existing = json.load(open(config_path)) if os.path.exists(config_path) else None
         plan = []
-        # A config that differs only in the retired "listen" is rewritten without it, no --force needed.
-        retired = existing is not None and "listen" in existing and {k: v for k, v in existing.items() if k != "listen"} == cfg
-        if retired:
+        # A config that differs only in the retired "listen" (unless its "unmonitored": false still applies), or in the
+        # "agent" an earlier version did not record, is rewritten without --force.
+        unrecorded = existing is not None and "agent" not in existing and "agent" in cfg
+        active_listen = (existing is not None and isinstance(existing.get("listen"), dict)
+                         and existing["listen"].get("unmonitored") is False)
+        retired = (existing is not None and not active_listen and ("listen" in existing or unrecorded)
+                   and {k: v for k, v in existing.items() if k != "listen"}
+                   == {k: v for k, v in cfg.items() if not (unrecorded and k == "agent")})
+        if retired and "listen" in existing:
             plan.append(f'drop the retired "listen" from {config_path} (notifications replaced the event listener)')
+        if retired and unrecorded:
+            plan.append(f'record the agent {cfg["agent"]} in {config_path}')
         for board in self.skipped:
             self.out(f"skipped card table {board!r}: no matching repo; pass --repo-map {board}=<repo> to include it")
         for board, col in to_create:
@@ -683,7 +705,10 @@ class Init:
             fields = diff_fields(existing, cfg)
             if not self.force:
                 msg = (f"{config_path} already exists and differs in: {', '.join(fields)}. "
-                       "Check the discovered config; pass --force to replace it.")
+                       "Check the discovered config; pass --force to replace it."
+                       + (' To keep settings init cannot reproduce (here "listen": {"unmonitored": false}), add the '
+                          'verified "agent" id to the existing config by hand instead.' if active_listen and unrecorded
+                          else ""))
                 if not self.dry:
                     raise Refuse(msg + "\n" + json.dumps(cfg, indent=1))
                 plan.append("REFUSE: " + msg)
@@ -749,6 +774,8 @@ def cli(argv, **kw):
     ap.add_argument("--login", required=True, help="the basecamp CLI profile the sync acts as")
     ap.add_argument("--home", required=True, help="the firstmate home")
     ap.add_argument("--captain", help="the captain's person id or email (default: the project's account owner)")
+    ap.add_argument("--agent", type=int, help="the agent's own Basecamp person id, the person --login must sign in as "
+                                              "(required for a new home; a re-run keeps the existing config's)")
     ap.add_argument("--listen-to", action="append", default=[], metavar="PERSON",
                     help="also relay this person's lines, comments and boosts as information, never as the captain's "
                          "decisions: a person id, email or exact name on the project or, failing that, in the account "
@@ -838,7 +865,7 @@ def cli(argv, **kw):
         print("--blocked-reply takes the reply's text, and cannot be combined with --no-blocked-reply", file=sys.stderr)
         return 2
     try:
-        Init(a.url, a.login, a.home, captain=a.captain, listen_to=a.listen_to, operators=a.operator,
+        Init(a.url, a.login, a.home, captain=a.captain, agent=a.agent, listen_to=a.listen_to, operators=a.operator,
              participants_project=a.participants_project, participants_domains=a.participants_domain,
              participants_company=a.participants_company, repo_map=a.repo_map,
              create_missing=a.create_missing_columns, dry=a.dry_run, force=a.force,

@@ -219,6 +219,7 @@ re-entering. A config that still has `"listen"` keeps working: the key is ignore
 note in `sync.log` (its `"unmonitored": false` still applies; move it to
 `"notifications"`). `sync.py listen` only logs that and exits 0, so a listener service
 left running stays down. Re-run `init` (or `basecamp-mate setup`) to remove the service and
-drop `"listen"` from the config; `init` does both without `--force`. `basecamp-mate doctor`
+drop `"listen"` from the config; `init` does both without `--force`, except over a
+`"listen"` that still holds `"unmonitored": false`. `basecamp-mate doctor`
 flags a listener service still installed. The old `feed.json`, `pings-feed.json` and
 `requests-feed.json` are no longer read and can be deleted.
