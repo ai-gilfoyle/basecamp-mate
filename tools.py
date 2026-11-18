@@ -57,6 +57,9 @@ WHY = {"mention": "addressed", "chat-question": "chat", "ping": "ping", "comment
 WHEN = ("ask", "due", "before")
 # The automatic reply to someone the sync does not listen to who addresses the agent ("blocked": {} in the config).
 BLOCKED_REPLY = "Sorry, I can't act on this: I only take requests from the people I work for. Please ask one of them to pass it on."
+# The CLI's notice on a list it cut short ("Showing 100 of 105 results (use --all for complete list)").
+TRUNCATED = re.compile(r"Showing (\d+) of (\d+) results")
+
 # Logged once when a request's to-do, card or step refetch answers not_found: final for that record, never retried.
 NOT_FOUND = "not found (deleted, or out of this login's reach)"
 
@@ -75,6 +78,7 @@ class Tools:
         self.config_path = os.path.abspath(config_path)
         self.dir = os.path.dirname(self.config_path)
         self.held = set()
+        self.notices = set()  # notices on a `comments list` that are not a truncation, each logged once
         # Projects of watched chats (`sync.py watch`) another live home on this login reads as its project, set by
         # Sync.claim each run: those chats are skipped, so that home reads them alone.
         self.watch_held = set()
@@ -287,7 +291,8 @@ class Tools:
 
     def bc(self, *args, input=None, project=None, tries=3):
         """Run the basecamp CLI on the configured project, or on `project` (another bucket of the account) when given;
-        a retryable failure is tried again, up to `tries` runs in all."""
+        a retryable failure is tried again, up to `tries` runs in all. A `comments list` the CLI reports as cut short
+        (a "Showing <n> of <m> results" notice) is a failure, not a success; any other notice is logged once and ignored."""
         prof = ["-P", self.profile] if self.profile else []
         cmd = ["basecamp", "-a", self.account, *prof, *args, "-p", str(project or self.project), "--json"]
         for attempt in range(tries):
@@ -297,12 +302,31 @@ class Tools:
                 out = json.loads(r.stdout)
             except ValueError:
                 out = {"ok": False, "error": (r.stdout + r.stderr)[:300]}
+            if out.get("ok") and args[:2] == ("comments", "list") and out.get("notice"):
+                notice = str(out["notice"])
+                if TRUNCATED.search(notice):
+                    self.errors += 1
+                    raise BasecampError(f"basecamp {' '.join(args[:3])}: incomplete: {notice}")
+                if notice not in self.notices:
+                    self.notices.add(notice)
+                    self.log(f"basecamp {' '.join(args[:2])}: notice ignored (not a truncation): {notice}")
             if out.get("ok"):
                 return out.get("data")
             if not out.get("retryable") or attempt == tries - 1:
                 self.errors += 1
                 raise BasecampError(f"basecamp {' '.join(args[:3])}: {out.get('error')}", out.get("code"), out.get("error"))
             time.sleep(3)
+
+    def comments(self, recording, project=None, newest=None):
+        """The comments on `recording`, as the basecamp CLI lists them (oldest first). Without `--all` the CLI lists only
+        the oldest 100, and a comment past the 100th was never read, so every read asks for all of them, and a list the
+        CLI reports as incomplete raises BasecampError. With `newest`,
+        only the newest that many are kept (by their own created_at), never the oldest."""
+        comments = self.bc("comments", "list", str(recording), "--all", project=project) or []
+        if newest is None:
+            return comments
+        comments = sorted(comments, key=lambda c: (datetime.fromisoformat(c["created_at"].replace("Z", "+00:00")), c["id"]))
+        return comments[max(len(comments) - newest, 0):]
 
     def gh(self, *args):
         r = self.run(["gh", *args], capture_output=True, text=True, timeout=60)
@@ -685,7 +709,7 @@ class Tools:
     def read_card_comments(self, task, repo, key, rec):
         """Record the new comments of the people listened to on card rec["card"]: "question" when it has "?", else "comment"."""
         try:
-            comments = self.bc("comments", "list", str(rec["card"])) or []
+            comments = self.comments(rec["card"])
         except RuntimeError as e:
             self.log(f"comments {key}: {e}")
             comments = []
@@ -1121,7 +1145,7 @@ class Tools:
                 if not m.get("comments_count"):
                     continue
                 try:
-                    comments = self.bc("comments", "list", str(m["id"])) or []
+                    comments = self.comments(m["id"])
                 except RuntimeError as e:
                     self.log(f"message {m['id']} comments: {e}")
                     continue
@@ -1199,7 +1223,7 @@ class Tools:
                 deferred = step and self.card_read_elsewhere(key, rec)
                 try:
                     comments = [] if deferred else \
-                        self.bc("comments", "list", str(thread), project=rec.get("bucket")) or []
+                        self.comments(thread, project=rec.get("bucket"))
                 except RuntimeError as e:
                     self.log(f"todo {key}: {e}")
                     continue
@@ -1669,7 +1693,7 @@ class Tools:
         if what == "step":
             boundary = assigned_at or todo.get("created_at")
             try:  # the card's comments up to the assignment are its own: the step's start after them
-                cursor = max([c.get("id", 0) for c in self.bc("comments", "list", str(card["id"]), project=bucket) or []
+                cursor = max([c.get("id", 0) for c in self.comments(card["id"], project=bucket)
                               if boundary is None or not later(c.get("created_at"), boundary)], default=0)
             except RuntimeError as e:
                 self.log(f"todo request {tid}: the comments on card {card['id']}: {e}")
@@ -2014,7 +2038,7 @@ class Tools:
         if self.agent() is None:
             return
         try:
-            comments = self.bc("comments", "list", str(thread), project=bucket) or []
+            comments = self.comments(thread, project=bucket)
         except RuntimeError as e:
             self.log(f"thread {thread}: {e}")
             return
@@ -2742,7 +2766,7 @@ class Tools:
             self.log(f"dry decide {key}: comment on and add a step for {decider} to {rid} in project {bucket}")
             return None
         if tracked is None:
-            comments = self.bc("comments", "list", str(rid), project=bucket) or []
+            comments = self.comments(rid, project=bucket)
             rec = {"todo": rid, "title": thing.get("title") or thing.get("content"), "url": thing.get("app_url"), "on": True,
                    "cursor": max([c.get("id", 0) for c in comments], default=0), "boost_counts": {}, "boost_seen": [],
                    "created": now_iso(), **({"bucket": int(bucket)} if bucket != str(self.project) else {}),
@@ -2773,7 +2797,7 @@ class Tools:
                 return False
         bucket = str(project or self.project)
         todo = self.bc("api", "get", f"/buckets/{bucket}/todos/{tid}.json", project=bucket) or {}
-        comments = self.bc("comments", "list", str(tid), project=bucket) or []
+        comments = self.comments(tid, project=bucket)
         cursor = max([c.get("id", 0) for c in comments], default=0)
         if self.dry:
             self.log(f"dry todo track {key}: todo {tid}, cursor {cursor}")

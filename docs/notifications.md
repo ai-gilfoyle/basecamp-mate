@@ -37,6 +37,13 @@ own:
 | an `Assignment`, `Event` (a step added already assigned) or `Completion` of a card step, which subscribes to the step and links to its card (`/card_tables/cards/<card>#__recording_<step>`), with `assigned_steps` on (in any project with `"scope": "account"`) | the card step request reader, or the request's edit and closing check; a decision step `sync.py decide` put there runs its record's reader instead; with `assigned_steps` off, an owner's assignment or completion of a step is unmonitored, never read as a to-do or card |
 | a check-in `Reminder` (with `checkins` on) | the check-in reader: a faster signal than the 5-minute schedule check |
 
+Every reader of a to-do's, card's, message's or other thread's comments lists all of them
+(`basecamp comments list --all`). Without `--all` the CLI lists only the oldest 100, so a
+comment past the 100th was never read and its notification was still marked read. A read
+limited to fewer comments than the thread holds keeps the newest, never the oldest. A list
+the CLI reports as incomplete (its notice) is a failed read: the thread's cursor stays put
+and its notification stays unread for the next run.
+
 The agent's login hears what it is subscribed to: what it created, commented on or was
 assigned, plus anything it was @mentioned in, replied to or Pinged in. To have it hear
 another thread without mentions (another chat, a check-in's answers), subscribe its

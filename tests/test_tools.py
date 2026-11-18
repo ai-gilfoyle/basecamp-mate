@@ -303,6 +303,46 @@ class TodoCommandsRefused(ToolBase):
         self.assertNotIn("completed", self.todos()["ta-x"])
 
 
+class CommentReads(ToolBase):
+    """`comments list` lists only the oldest 100 comments unless it is given --all; every read gets all of them, and a
+    read limited to fewer than all keeps the newest."""
+
+    def long_thread(self, n=150):
+        return [dict(comment(i), created_at=f"2026-11-{1 + i // 24:02d}T{i % 24:02d}:00:00Z") for i in range(1, n + 1)]
+
+    def test_every_read_asks_for_all_comments(self):
+        self.stub.comments["42"] = self.long_thread()
+        self.assertEqual([c["id"] for c in self.sync().comments(42)], list(range(1, 151)))
+        self.assertEqual(self.stub.made("comments list"), [["comments", "list", "42", "--all"]])
+
+    def test_a_limited_read_keeps_the_newest_comments(self):
+        self.stub.comments["42"] = self.long_thread()
+        self.assertEqual([c["id"] for c in self.sync().comments(42, newest=10)], list(range(141, 151)))
+        self.assertEqual(self.stub.made("comments list"), [["comments", "list", "42", "--all"]])
+        self.stub.comments["42"] = list(reversed(self.long_thread()))  # judged by created_at, not by list order
+        self.assertEqual([c["id"] for c in self.sync().comments(42, newest=3)], [148, 149, 150])
+        self.assertEqual(len(self.sync().comments(42, newest=500)), 150)
+        self.assertEqual(self.sync().comments(42, newest=0), [])
+
+    def test_a_limited_read_compares_fractional_seconds_as_time(self):
+        self.stub.comments["42"] = [dict(comment(2), created_at="2026-11-17T12:00:00.250Z"),
+                                    dict(comment(1), created_at="2026-11-17T12:00:00Z"),
+                                    dict(comment(3), created_at="2026-11-17T06:00:00.5-06:00")]
+        self.assertEqual([c["id"] for c in self.sync().comments(42, newest=1)], [3])
+        self.assertEqual([c["id"] for c in self.sync().comments(42, newest=2)], [2, 3])
+        self.stub.comments["42"] = [dict(comment(9), created_at="2026-11-17T12:00:00Z"),
+                                    dict(comment(8), created_at="2026-11-17T12:00:00Z")]
+        self.assertEqual([c["id"] for c in self.sync().comments(42, newest=1)], [9])
+
+    def test_tracking_a_long_todo_starts_after_its_newest_comment(self):
+        self.stub.comments["42"] = self.long_thread(105)
+        self.assertTrue(self.sync().todo_track("old", 42))
+        self.assertEqual(self.todos()["old"]["cursor"], 105)
+        self.stub.comments["42"].append(comment(106))
+        self.poll()
+        self.assertEqual([r["comment"] for r in self.pending()], [106])
+
+
 class TodoTrack(ToolBase):
     def test_adopts_a_todo_without_relaying_its_history(self):
         self.stub.comments["42"] = [comment(3), comment(4)]
