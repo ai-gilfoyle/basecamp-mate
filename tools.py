@@ -391,8 +391,8 @@ class Tools:
         if self.agent_id is None:
             return (f'login check: the config has no "agent", so nothing ran; add "agent": <the agent\'s Basecamp person '
                     f'id> to {self.config_path} (or re-run init with --agent <id>)')
-        relogin = ("sign in as the agent: BASECAMP_NO_KEYRING=1 basecamp auth login "
-                   + (f"-P {self.profile} " if self.profile else "") + "--device-code")
+        relogin = ("sign in again as the agent, in the credential store this feed uses: basecamp auth login"
+                   + (f" -P {self.profile}" if self.profile else ""))
         try:
             me = self.bc("api", "get", "/my/profile.json") or {}
         except RuntimeError as e:

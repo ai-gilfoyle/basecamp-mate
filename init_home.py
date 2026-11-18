@@ -396,9 +396,6 @@ class Init:
         if agent is not None and agent != acting:
             problems.append(f"the login {self.login} signs in as {me.get('name')} ({acting}), but the agent is "
                             f"{agent}; sign the login in as the agent (docs/firstmate-account.md)")
-        elif agent is None and self.existing() is None:
-            problems.append("no agent for a new home: pass --agent <the agent's Basecamp person id>, the person the "
-                            f"login {self.login} must sign in as")
         elif agent is None:
             self.notes.append('no "agent" in the config: the sync does nothing until it names the agent\'s person id; '
                               "re-run with --agent <id>")
@@ -677,6 +674,9 @@ class Init:
         if os.path.realpath(self.dir).startswith(os.path.realpath(self.sync_dir) + os.sep):
             raise Refuse(f"{self.dir} is inside this repo; the config lives in the home, never here")
         self.system.preflight(self.home)
+        if self.agent_arg is None and self.existing() is None:
+            raise Refuse("init refused, nothing was written: a new home needs --agent <the agent's Basecamp person id>, "
+                         f"the person the login {self.login} must sign in as")
         cfg, to_create = self.discover()
         config_path = os.path.join(self.dir, "config.json")
         existing = json.load(open(config_path)) if os.path.exists(config_path) else None
@@ -769,7 +769,7 @@ def cli(argv, **kw):
     ap.add_argument("--home", required=True, help="the firstmate home")
     ap.add_argument("--captain", help="the captain's person id or email (default: the project's account owner)")
     ap.add_argument("--agent", type=int, help="the agent's own Basecamp person id, the person --login must sign in as "
-                                              "(a re-run keeps the existing config's); without it the sync does nothing")
+                                              "(required for a new home; a re-run keeps the existing config's)")
     ap.add_argument("--listen-to", action="append", default=[], metavar="PERSON",
                     help="also relay this person's lines, comments and boosts as information, never as the captain's "
                          "decisions: a person id, email or exact name on the project or, failing that, in the account "

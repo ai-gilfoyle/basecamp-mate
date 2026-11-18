@@ -260,10 +260,11 @@ class Init(unittest.TestCase):
         json.dump(c, open(cfg, "w"))
         return cfg
 
-    def test_a_new_home_without_agent_is_refused_and_writes_nothing(self):
+    def test_a_new_home_without_agent_is_refused_before_any_basecamp_call(self):
         with self.assertRaises(init_home.Refuse) as e:
             self.init(agent=None).main()
-        self.assertIn("pass --agent <the agent's Basecamp person id>", str(e.exception))
+        self.assertIn("a new home needs --agent <the agent's Basecamp person id>", str(e.exception))
+        self.assertEqual(self.stub.calls, [])
         self.assertFalse(os.path.exists(os.path.join(self.dir, "config.json")))
         self.assertEqual(self.system.units, {})
 

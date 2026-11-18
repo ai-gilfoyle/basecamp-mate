@@ -55,7 +55,7 @@ file or run claim, and exits 1. It logs a line that names both people and the co
 sign in again:
 
 ```
-FAILED wrong login: the sign-in firstmate is Jay Park (50519852), not the agent (52942343), so nothing ran and no state changed; sign in as the agent: BASECAMP_NO_KEYRING=1 basecamp auth login -P firstmate --device-code
+FAILED wrong login: the sign-in firstmate is Jay Park (50519852), not the agent (52942343), so nothing ran and no state changed; sign in again as the agent, in the credential store this feed uses: basecamp auth login -P firstmate
 ```
 
 A run that cannot read `/my/profile.json` at all is skipped the same way, with a
