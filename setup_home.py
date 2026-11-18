@@ -42,7 +42,7 @@ QUESTIONS = (
     ("reports", "Let the agent post reports on the Message Board?", False),
     ("pings", "Relay your Pings (direct messages) to the agent?", False),
 )
-ANSWERS = ("home", "login", "account", "project", "captain", "timezone", "replace", "install_cli",
+ANSWERS = ("home", "login", "account", "project", "captain", "agent", "timezone", "replace", "install_cli",
            "inbox", "session_alert", *(k for k, _, _ in QUESTIONS))
 LABELS = {"chat": "chat inbox", "todos": "decision to-dos", "checkins": "check-in answers",
           "cards": "card mirror", "assign": "card assignment for decisions", "releases": "release announcements",

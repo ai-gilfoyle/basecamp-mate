@@ -84,7 +84,7 @@ Usage: sync.py --home <home> --config <config.json> [--all] [--dry-run] [--inclu
        sync.py access --home <home> --config <config.json>      (who gets through to the agent, and where)
        sync.py setup [--answers <file.json>] [--yes]      (guided; also bin/basecamp-mate setup)
        sync.py doctor [--home <home>] [--config <config.json>]
-       sync.py init <project URL> --login <profile> --home <home> [--captain <id or email>] [--listen-to <person>]... [--repo-map TABLE=REPO] [--dry-run]
+       sync.py init <project URL> --login <profile> --agent <person id> --home <home> [--captain <id or email>] [--listen-to <person>]... [--repo-map TABLE=REPO] [--dry-run]
 """
 import argparse, json, subprocess, sys
 from datetime import datetime, timezone

@@ -48,13 +48,14 @@ Run `doctor` after setting up, and whenever a run fails. As the agent, follow th
 
 1. You need your own Basecamp user, signed in as a `basecamp` CLI login separate from the
    captain's. Follow `SYNC/docs/firstmate-account.md`; the login is usually `firstmate`.
-   Check it: `basecamp api get /my/profile.json -P firstmate` must show your user, not theirs.
+   Check it: `basecamp api get /my/profile.json -P firstmate` must show your user, not theirs;
+   its `id` is your person id, AGENT below.
    If there is no such login, ask the captain for it (it needs their browser) and stop here.
 2. Install the skill: `for d in ~/.claude/skills ~/.codex/skills ~/.pi/agent/skills; do mkdir -p "$d" && ln -sfn SYNC/skills/basecamp-sync "$d/basecamp-sync"; done`.
 3. Preview the setup:
 
    ```sh
-   python3 SYNC/sync.py init URL --login firstmate --home HOME --no-cards --no-releases \
+   python3 SYNC/sync.py init URL --login firstmate --agent AGENT --home HOME --no-cards --no-releases \
      --todos --reports --every-line --pings --assigned-todos --inbox --checkins <account time zone, e.g. America/New_York> --dry-run
    ```
 

@@ -60,8 +60,11 @@ FAILED wrong login: the sign-in firstmate is Jay Park (50519852), not the agent 
 
 A run that cannot read `/my/profile.json` at all is skipped the same way, with a
 `FAILED login check` line, and so is a config without `agent`, with a `FAILED login check`
-line that says to add it by hand or to re-run `init` with `--agent <id>`, which adds it
-to a config that lacks it without `--force`. A dry run prints the line and writes nothing.
+line that says to add it by hand or to re-run `init` with `--agent <id>`. `init` adds it
+without `--force` only when the rest of the config matches what `init` discovers (apart
+from the retired `listen`); for a config with settings `init` cannot reproduce, such as
+`"notifications": {"mark_read": false}`, add the verified `agent` id to the existing config
+by hand, so those settings are kept. A dry run prints the line and writes nothing.
 When the right person signs in again, the next run carries on from the state the last good
 run left. `backup`, `timesheet post` and `watch` make the same check, before and inside the
 state lock. The check is the same with or without `profile`.

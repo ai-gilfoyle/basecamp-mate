@@ -390,7 +390,8 @@ class Tools:
         login = f"the sign-in {self.profile}" if self.profile else "the default sign-in"
         if self.agent_id is None:
             return (f'login check: the config has no "agent", so nothing ran; add "agent": <the agent\'s Basecamp person '
-                    f'id> to {self.config_path} (or re-run init with --agent <id>)')
+                    f'id> to {self.config_path} by hand, which keeps every other setting (re-running init with --agent <id> '
+                    'adds it only when init reproduces the rest of the config)')
         relogin = ("sign in again as the agent, in the credential store this feed uses: basecamp auth login"
                    + (f" -P {self.profile}" if self.profile else ""))
         try:
