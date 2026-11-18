@@ -51,7 +51,7 @@ each problem with its fix; it exits non-zero when something is broken.
 "Use this Basecamp project with the firstmate login" means:
 
 ```sh
-python3 $SYNC/sync.py init <project URL> --login firstmate --home <this home> --dry-run
+python3 $SYNC/sync.py init <project URL> --login firstmate --agent <the firstmate login's person id> --home <this home> --dry-run
 ```
 
 Read the printed config, then run it again without `--dry-run`. It refuses rather than

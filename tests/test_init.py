@@ -409,7 +409,7 @@ class InitTest(unittest.TestCase):
     def test_the_listen_flag_is_accepted_and_does_nothing(self):
         out = io.StringIO()
         with redirect_stderr(out):
-            code = init_home.cli([URL, "--login", "firstmate", "--home", self.home, "--repo-map", "server=my-server",
+            code = init_home.cli([URL, "--login", "firstmate", "--agent", str(ACTING), "--home", self.home, "--repo-map", "server=my-server",
                                   "--listen", "--dry-run"], runner=self.stub, system=self.system,
                                  sync_dir=os.path.join(self.tmp, "repo"), out=self.printed.append)
         self.assertEqual(code, 0)

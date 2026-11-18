@@ -7,7 +7,7 @@ way in. This page covers what it does underneath: `sync.py init`, the guided set
 ## Set up a home
 
 ```sh
-python3 sync.py init https://app.basecamp.com/<account>/projects/<project> --login firstmate --home <home> --dry-run
+python3 sync.py init https://app.basecamp.com/<account>/projects/<project> --login firstmate --agent <agent person id> --home <home> --dry-run
 ```
 
 `init` reads the project as the `--login` profile and discovers every id below: the card
@@ -16,8 +16,9 @@ tables in the project's dock, each matched to a backlog repo by its title
 `data/projects.md`; each table's columns by their exact names; the login's own identity
 (`/my/profile.json`), which must be the `--agent <person id>` given (or, on a re-run
 without it, the existing config's `agent`), recorded as `agent` for
-[the agent check](running.md#the-agent-check); without either, `agent` is left out and
-the sync does nothing until it is set; the captain; the chats in the dock; and, when the dock has one
+[the agent check](running.md#the-agent-check); a new home without `--agent` is refused,
+and an existing config without `agent` is left without it, so the sync does nothing until
+it is set; the captain; the chats in the dock; and, when the dock has one
 Message Board, `releases`: its id and the GitHub repo behind each mapped repo's
 `<home>/projects/<repo>` origin (renames followed through `gh repo view`), named by its
 board. A repo's `note` is added by hand. `--captain <person id or

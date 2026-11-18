@@ -90,8 +90,9 @@ one), a matching sign-in runs as before, a sign-in that changes while the run wa
 state lock or for its run claim, an unreadable profile skipped (in a dry run too, writing
 nothing), a config without `agent` refused with or without a profile, a dry run that only
 prints, `backup`, `timesheet post` and `watch` refused as someone else, an `agent` that is
-not a number refused, and `init` recording only the `--agent` given or the config's, adding
-it to an older config without `--force`, and refusing a login that signs in as someone else;
+not a number refused, and `init` refusing a new home without `--agent`, recording only the
+`--agent` given or the config's, adding it to an older config without `--force`, and
+refusing a login that signs in as someone else;
 `tests/test_login.py` covers the login guard (`sync.py renew`) with a stubbed `basecamp auth`
 and a temporary `credentials.json`: a renewal that empties the file restored from the
 backup, a network-down run leaving the file untouched, only the lost profile put back beside

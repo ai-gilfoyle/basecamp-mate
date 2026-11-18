@@ -396,6 +396,9 @@ class Init:
         if agent is not None and agent != acting:
             problems.append(f"the login {self.login} signs in as {me.get('name')} ({acting}), but the agent is "
                             f"{agent}; sign the login in as the agent (docs/firstmate-account.md)")
+        elif agent is None and self.existing() is None:
+            problems.append("no agent for a new home: pass --agent <the agent's Basecamp person id>, the person the "
+                            f"login {self.login} must sign in as")
         elif agent is None:
             self.notes.append('no "agent" in the config: the sync does nothing until it names the agent\'s person id; '
                               "re-run with --agent <id>")

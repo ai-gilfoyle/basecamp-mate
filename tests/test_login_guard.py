@@ -251,11 +251,27 @@ class Init(unittest.TestCase):
             self.init(agent=None).main()
         self.assertEqual(self.files(), before)
 
+    def older_config(self):
+        """A config written before init recorded "agent"."""
+        self.init().main()
+        cfg = os.path.join(self.dir, "config.json")
+        c = json.load(open(cfg))
+        c.pop("agent")
+        json.dump(c, open(cfg, "w"))
+        return cfg
+
+    def test_a_new_home_without_agent_is_refused_and_writes_nothing(self):
+        with self.assertRaises(init_home.Refuse) as e:
+            self.init(agent=None).main()
+        self.assertIn("pass --agent <the agent's Basecamp person id>", str(e.exception))
+        self.assertFalse(os.path.exists(os.path.join(self.dir, "config.json")))
+        self.assertEqual(self.system.units, {})
+
     def test_the_agent_comes_only_from_agent_or_the_config_never_from_the_login(self):
+        cfg = self.older_config()
         self.stub.people.append({"id": OTHER, "name": "Jay Park", "owner": False})
         self.stub = self.signed_in_as(OTHER)
         self.init(agent=None).main()
-        cfg = os.path.join(self.dir, "config.json")
         self.assertNotIn("agent", json.load(open(cfg)))
         self.assertTrue(any('no "agent"' in p for p in self.printed))
         with self.assertRaises(init_home.Refuse):
@@ -263,7 +279,7 @@ class Init(unittest.TestCase):
         self.assertNotIn("agent", json.load(open(cfg)))
 
     def test_an_older_config_gains_the_agent_given_without_force(self):
-        self.init(agent=None).main()
+        self.older_config()
         self.init().main()
         self.assertEqual(json.load(open(os.path.join(self.dir, "config.json")))["agent"], test_init.ACTING)
 
