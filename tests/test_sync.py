@@ -27,6 +27,7 @@ class Stub:
         self.pingable = []  # `people pingable`: the people the acting login can @mention; None fails it, an exception is raised
         self.project_people = {}  # bucket id -> its /projects/<id>/people.json; a bucket not listed has everyone pingable
         self.cut = set()  # recording ids whose `comments list` the CLI cuts short: one comment missing, and a notice
+        self.notice = {}  # recording id -> an unrelated notice its full `comments list` carries
 
     def __call__(self, cmd, **kw):
         if cmd[0] == "lavish-axi":
@@ -53,6 +54,8 @@ class Stub:
             if args[2] in self.cut:
                 notice = f"Showing {len(data) - 1} of {len(data)} results"
                 return SimpleNamespace(stdout=json.dumps({"ok": True, "data": data[:-1], "notice": notice}), stderr="", returncode=0)
+            if args[2] in self.notice:
+                return SimpleNamespace(stdout=json.dumps({"ok": True, "data": data, "notice": self.notice[args[2]]}), stderr="", returncode=0)
         elif args[:3] == ["api", "get", "/my/readings.json"]:
             data = self.readings
         elif args[:3] == ["api", "get", "/my/boosts.json"]:

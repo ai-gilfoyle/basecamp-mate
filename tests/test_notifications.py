@@ -295,6 +295,17 @@ class Threads(NotifBase):
         self.assertEqual([(r["kind"], r["comment"]) for r in self.pending()], [("mention", 1101)])
         self.assertEqual(self.stub.marked, [["10"]])
 
+    def test_an_unrelated_notice_on_a_full_thread_read_is_logged_once_and_the_read_is_complete(self):
+        self.stub.comments["4"] = [self.doc_comment(1100, who=1, content="<p>noted</p>"), self.doc_comment(1101)]
+        self.notify(note(10, thread=4, anchor=1101, path="documents", title="Re: Roadmap"))
+        self.stub.notice["4"] = "Tip: try --md for markdown output"
+        self.poll()
+        self.assertEqual([(r["kind"], r["comment"]) for r in self.pending()], [("mention", 1101)])
+        self.assertEqual(self.stub.marked, [["10"]])
+        self.assertEqual(self.state("threads.json")[f"{PROJECT}:4"]["cursor"], 1101)
+        self.assertNotIn("incomplete", self.log())
+        self.assertEqual(self.log().count("notice ignored"), 1)
+
     def test_a_mention_is_a_mention_record(self):
         self.stub.comments["4"] = [self.doc_comment(9, content="<p>@Agent can you check this?</p>")]
         self.notify(note(10, "Mention", thread=4, anchor=9, path="documents"))

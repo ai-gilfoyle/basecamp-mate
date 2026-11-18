@@ -57,6 +57,9 @@ WHY = {"mention": "addressed", "chat-question": "chat", "ping": "ping", "comment
 WHEN = ("ask", "due", "before")
 # The automatic reply to someone the sync does not listen to who addresses the agent ("blocked": {} in the config).
 BLOCKED_REPLY = "Sorry, I can't act on this: I only take requests from the people I work for. Please ask one of them to pass it on."
+# The CLI's notice on a list it cut short ("Showing 100 of 105 results (use --all for complete list)").
+TRUNCATED = re.compile(r"Showing (\d+) of (\d+) results")
+
 # Logged once when a request's to-do, card or step refetch answers not_found: final for that record, never retried.
 NOT_FOUND = "not found (deleted, or out of this login's reach)"
 
@@ -75,6 +78,7 @@ class Tools:
         self.config_path = os.path.abspath(config_path)
         self.dir = os.path.dirname(self.config_path)
         self.held = set()
+        self.notices = set()  # notices on a `comments list` that are not a truncation, each logged once
         # Projects of watched chats (`sync.py watch`) another live home on this login reads as its project, set by
         # Sync.claim each run: those chats are skipped, so that home reads them alone.
         self.watch_held = set()
@@ -288,7 +292,7 @@ class Tools:
     def bc(self, *args, input=None, project=None, tries=3):
         """Run the basecamp CLI on the configured project, or on `project` (another bucket of the account) when given;
         a retryable failure is tried again, up to `tries` runs in all. A `comments list` the CLI reports as cut short
-        (its notice) is a failure, not a success."""
+        (a "Showing <n> of <m> results" notice) is a failure, not a success; any other notice is logged once and ignored."""
         prof = ["-P", self.profile] if self.profile else []
         cmd = ["basecamp", "-a", self.account, *prof, *args, "-p", str(project or self.project), "--json"]
         for attempt in range(tries):
@@ -299,8 +303,13 @@ class Tools:
             except ValueError:
                 out = {"ok": False, "error": (r.stdout + r.stderr)[:300]}
             if out.get("ok") and args[:2] == ("comments", "list") and out.get("notice"):
-                self.errors += 1
-                raise BasecampError(f"basecamp {' '.join(args[:3])}: incomplete: {out['notice']}")
+                notice = str(out["notice"])
+                if TRUNCATED.search(notice):
+                    self.errors += 1
+                    raise BasecampError(f"basecamp {' '.join(args[:3])}: incomplete: {notice}")
+                if notice not in self.notices:
+                    self.notices.add(notice)
+                    self.log(f"basecamp {' '.join(args[:2])}: notice ignored (not a truncation): {notice}")
             if out.get("ok"):
                 return out.get("data")
             if not out.get("retryable") or attempt == tries - 1:
