@@ -396,7 +396,12 @@ that read.
   `FAILED wrong login` means the login is signed in as someone other than the agent (the
   config's `agent`): the sync did nothing and changed no state. Never edit `agent` to match;
   relay it so the captain signs the login in again as the agent (`FAILED login check`: who it
-  signs in as could not be read, or the config has no `agent`; relay it the same way).
+  signs in as could not be read, or the config has no `agent`; relay it the same way). While
+  it lasts, `reply`, `todo`, `decide`, `ask`, `answer`, `post-message`, `dismiss`,
+  `schedule set` and `unmonitored handle` refuse too (exit 1, the same line), so nothing is
+  posted under someone else's name; wait for the sign-in rather than retrying. The line is
+  logged once per cause and then hourly, and `login: the sign-in is the agent again` marks
+  the end.
 
 The main firstmate's own home answers its questions itself rather than relaying.
 

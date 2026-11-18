@@ -45,11 +45,13 @@ Deterministic, no model calls. Safety bounds, enforced here:
     timesheet entry per piece of work per finished day (timesheet.json keeps each one posted);
   - only the explicit commands post, run by the agent, and each refuses to when no
     profile is set or the profile signs in as the owner;
-  - a timer run, `backup`, `timesheet post` and `watch` do nothing unless the login signs
-    in as the agent ("agent" in the config, set by init --agent): they read only
-    /my/profile.json, before and again inside the state lock (a timer run once more just
-    before it writes its run claim), write no state and log one FAILED line; a config
-    without "agent" is refused the same way;
+  - a timer run, `backup`, `timesheet post`, `watch` and every command that posts (`reply`,
+    `dismiss`, `todo` but `show`, `decide`, `ask`, `answer`, `post-message`, `schedule set`,
+    `unmonitored handle`) do nothing unless the login signs in as the agent ("agent" in the
+    config, set by init --agent): they read only /my/profile.json, before and again inside
+    the state lock (a timer run once more just before it writes its run claim) and write no
+    state; a config without "agent" is refused the same way. The FAILED line is logged once
+    per cause, then at most hourly while it lasts, and one line notes when it ends;
   - id maps (map.json, todos.json, ...) make re-runs update or skip instead of
     duplicating.
 All runtime state lives in the directory that holds the config file, except each config's
@@ -265,17 +267,64 @@ def read(path):
         return f.read()
 
 
-def refused_login(s):
-    """True (FAILED line logged, or printed on a dry run) when nothing may run as this login (Tools.wrong_login)."""
-    wrong = s.wrong_login()
+REFUSALS = ("FAILED wrong login:", "FAILED login check:")  # the lines Tools.wrong_login's reasons are logged as
+AGENT_AGAIN = "login: the sign-in is the agent again; the sync runs"
+REFUSAL_EVERY = 3600  # seconds: a refusal that lasts is logged again at most this often (each FAILED wakes firstmate)
+LOG_TAIL = 65536  # bytes of sync.log read back to find the last login-check line
+
+
+def last_login_line(s):
+    """The newest refusal line, or the line that ended one, in the tail of sync.log: (message, epoch seconds or None),
+    or (None, None) when there is none."""
+    try:
+        with open(s.path("sync.log"), "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - LOG_TAIL))
+            tail = f.read().decode(errors="replace")
+    except OSError:
+        return None, None
+    for ln in reversed(tail.splitlines()):
+        stamp, _, msg = ln.partition(" ")
+        if msg.startswith(REFUSALS) or msg == AGENT_AGAIN:
+            try:
+                at = datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
+            except ValueError:
+                at = None
+            return msg, at
+    return None, None
+
+
+def report_login(s, wrong):
+    """Log the outcome of a login check without spamming: a refusal (`wrong`) is logged once per cause and then at most
+    every REFUSAL_EVERY seconds while it lasts (every FAILED line in sync.log wakes firstmate, and the timer runs every
+    30 seconds), and is only printed in between; the first check that passes after one logs AGENT_AGAIN. The mark is
+    sync.log itself, so a refused run still writes no state. A dry run only prints."""
+    if s.dry:
+        if wrong:
+            print(f"FAILED {wrong}")
+        return
+    last, at = last_login_line(s)
     if wrong:
-        (print if s.dry else s.log)(f"FAILED {wrong}")
+        line = f"FAILED {wrong}"
+        if last == line and at is not None and 0 <= datetime.now(timezone.utc).timestamp() - at < REFUSAL_EVERY:
+            print(line)
+        else:
+            s.log(line)
+    elif last is not None and last.startswith(REFUSALS):
+        s.log(AGENT_AGAIN)
+
+
+def refused_login(s):
+    """True when nothing may run as this login (Tools.wrong_login); the outcome is reported by report_login."""
+    wrong = s.wrong_login()
+    report_login(s, wrong)
     return bool(wrong)
 
 
 def command(a, what, call, runner, guard=False):
     """Run `call` under the state lock; with `guard`, only when the login is the agent, checked before the lock and
-    again once it is held."""
+    again once it is held. Every command that posts to Basecamp, or acts on what the agent was told there, passes
+    `guard`: signed in as anyone else it would post under that person's name."""
     s = Sync(a.home, a.config, dry=getattr(a, "dry_run", False), runner=runner)
     try:
         if guard and refused_login(s):
@@ -335,7 +384,7 @@ def todo_cli(argv, runner):
              "complete": lambda s: s.todo_complete(a.todo),
              "subtask": lambda s: s.todo_subtask(a.todo, a.number),
              "show": lambda s: s.todo_show(a.todo)}
-    return command(a, f"todo {sub}", calls[sub], runner)
+    return command(a, f"todo {sub}", calls[sub], runner, guard=sub != "show")
 
 
 def unmonitored_cli(argv, runner):
@@ -357,7 +406,7 @@ def unmonitored_cli(argv, runner):
         print(json.dumps(Sync(a.home, a.config, runner=runner).load("unmonitored.json", {}), indent=1, sort_keys=True))
         return 0
     return command(a, f"unmonitored {sub}", lambda s: s.unmonitored_handle(a.key, a.decision) if sub == "handle"
-                   else s.unmonitored_forget(a.key), runner)
+                   else s.unmonitored_forget(a.key), runner, guard=sub == "handle")
 
 
 def timesheet_cli(argv, runner):
@@ -420,7 +469,7 @@ def cli(argv=None, runner=subprocess.run):
         a = ap.parse_args(argv[1:])
         return command(a, f"reply {a.recording}", lambda s: s.reply(
             a.recording, None if a.boost is not None else read(a.body_file), again=a.again, boost=a.boost,
-            awaiting=a.awaiting), runner)
+            awaiting=a.awaiting), runner, guard=True)
     if argv[:1] == ["dismiss"]:
         ap = common("sync.py dismiss", "Say a relayed item was not for the agent: take the read boost (👀) off it and "
                                        "record it dismissed in the relay ledger (relay.jsonl).")
@@ -429,7 +478,7 @@ def cli(argv=None, runner=subprocess.run):
         ap.add_argument("--reason", help="why it was not for the agent, a few words (kept in the ledger)")
         ap.add_argument("--dry-run", action="store_true")
         a = ap.parse_args(argv[1:])
-        return command(a, f"dismiss {a.recording}", lambda s: s.dismiss(a.recording, a.reason), runner)
+        return command(a, f"dismiss {a.recording}", lambda s: s.dismiss(a.recording, a.reason), runner, guard=True)
     if argv[:1] == ["stats"]:
         import stats
         ap = common("sync.py stats", "Report the relay ledger: per period, the items relayed to the agent, answered, "
@@ -470,7 +519,7 @@ def cli(argv=None, runner=subprocess.run):
         ap.add_argument("--dry-run", action="store_true")
         a = ap.parse_args(argv[1:])
         return command(a, what, lambda s: s.ask(read(a.body_file)) if what == "ask"
-                       else s.answer(a.question, read(a.body_file)), runner)
+                       else s.answer(a.question, read(a.body_file)), runner, guard=True)
     if argv[:1] == ["schedule"]:
         sub = argv[1:2][0] if argv[1:] else None
         if sub not in ("show", "set"):
@@ -492,7 +541,8 @@ def cli(argv=None, runner=subprocess.run):
         if not (a.dated or a.recurring):
             ap.error("give --dated and/or --recurring")
         return command(a, "schedule set", lambda s: [s.schedule_set(w, v, a.list) for w, v in
-                                                     (("dated", a.dated), ("recurring", a.recurring)) if v], runner)
+                                                     (("dated", a.dated), ("recurring", a.recurring)) if v], runner,
+                       guard=True)
     if argv[:1] == ["decide"]:
         ap = common("sync.py decide", "Put a decision on the to-do or card it is about: a comment there and a step "
                                       "(subtask) assigned to the person who has to decide.")
@@ -505,14 +555,14 @@ def cli(argv=None, runner=subprocess.run):
         ap.add_argument("--dry-run", action="store_true")
         a = ap.parse_args(argv[1:])
         return command(a, "decide", lambda s: s.decide(a.on, a.question, read(a.body_file), a.key, a.project, a.decider),
-                       runner)
+                       runner, guard=True)
     if argv[:1] == ["post-message"]:
         ap = common("sync.py post-message", "Post a message on the configured message_board.")
         ap.add_argument("--subject", required=True)
         ap.add_argument("--body-file", required=True, help="the message, Markdown")
         ap.add_argument("--dry-run", action="store_true")
         a = ap.parse_args(argv[1:])
-        return command(a, "post-message", lambda s: s.post_message(a.subject, read(a.body_file)), runner)
+        return command(a, "post-message", lambda s: s.post_message(a.subject, read(a.body_file)), runner, guard=True)
     if argv[:1] == ["backup"]:
         ap = common("sync.py backup", "Upload the config and state files that changed to the configured backup folder now.")
         ap.add_argument("--dry-run", action="store_true")
@@ -573,7 +623,7 @@ def cli(argv=None, runner=subprocess.run):
                 return 1
             s.main(due=not a.all)
     except WrongLogin as e:
-        (print if s.dry else s.log)(f"FAILED {e}")
+        report_login(s, str(e))
         return 1
     except Exception as e:
         s.log(f"FAILED {type(e).__name__}: {e}")

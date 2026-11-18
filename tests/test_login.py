@@ -13,6 +13,8 @@ import login, sync  # noqa: E402
 NOW = 1_800_000_000
 FM = {"access_token": "a1", "refresh_token": "r1", "expires_at": NOW + 600, "oauth_type": "bc5"}
 CALEB = {"access_token": "c1", "refresh_token": "cr1", "expires_at": NOW + 3000, "oauth_type": "bc5"}
+OPERATOR = {"access_token": "o1", "refresh_token": "or1", "expires_at": NOW + 3000, "oauth_type": "bc5"}
+AGENT_ID, CALEB_ID, OPERATOR_ID = 53286738, 1001, 50519852  # who each login signs in as
 
 
 def load(path, default=None):
@@ -23,10 +25,19 @@ def load(path, default=None):
 
 
 class Home:
-    """The parts of Tools the guard uses: the config, state files beside it, and the log."""
+    """The parts of Tools the guard uses: the config (with its "agent"), state files beside it, the log, and
+    /my/profile.json, which reads back `me` (the person signed in; None: the read fails)."""
 
-    def __init__(self, d, profile="firstmate"):
+    def __init__(self, d, profile="firstmate", agent=AGENT_ID):
         self.dir, self.cfg, self.lines = d, {"profile": profile} if profile else {}, []
+        self.agent_id, self.me, self.reads = agent, agent, 0
+
+    def bc(self, *args, tries=3):
+        assert args == ("api", "get", "/my/profile.json"), args
+        self.reads += 1
+        if self.me is None:
+            raise RuntimeError("basecamp api get: Not authenticated")
+        return {"id": self.me}
 
     def path(self, name):
         return os.path.join(self.dir, name)
@@ -109,17 +120,72 @@ class GuardTest(unittest.TestCase):
     def guard(self, auth, up=True):
         return login.Login(self.home, runner=auth, reach=lambda: up, now=lambda: NOW, cred_dir=self.cred_dir)
 
+    def caleb(self):
+        """The renewal step of a second home, whose profile "caleb" signs in as its own agent."""
+        return login.Login(Home(self.home_dir, profile="caleb", agent=CALEB_ID),
+                           runner=Auth(self.creds, profile="caleb", expires_in=3000),
+                           reach=lambda: True, now=lambda: NOW, cred_dir=self.cred_dir)
+
+    def verify(self, *entries):
+        """Mark (key, entry, agent) as copied from a login confirmed to sign in as that agent."""
+        login.Login(self.home, cred_dir=self.cred_dir).write(
+            os.path.join(self.cred_dir, login.VERIFIED),
+            {k: {"fingerprint": login.fingerprint(v), "agent": a} for k, v, a in entries})
+
     def test_a_renewal_that_empties_the_file_is_restored_from_the_backup(self):
         auth = Auth(self.creds, on_refresh=lambda s: {})
         self.assertEqual(self.guard(auth).renew(), 0)
-        self.assertEqual(self.stored(), {"profile:caleb": CALEB, "profile:firstmate": FM})
+        # Only the agent's own login was ever copied, so only it comes back.
+        self.assertEqual(self.stored(), {"profile:firstmate": FM})
         self.assertEqual(stat.S_IMODE(os.stat(self.creds).st_mode), 0o600)
-        backup = os.path.join(self.cred_dir, login.BACKUP)
-        self.assertEqual(stat.S_IMODE(os.stat(backup).st_mode), 0o600)
+        for name in (login.BACKUP, login.VERIFIED):
+            self.assertEqual(stat.S_IMODE(os.stat(os.path.join(self.cred_dir, name)).st_mode), 0o600)
         self.assertEqual(len(self.home.lines), 1, self.home.lines)
         self.assertIn("login: restored", self.home.lines[0])
-        self.assertIn("put back profile:caleb, profile:firstmate", self.home.lines[0])
+        self.assertIn("put back profile:firstmate", self.home.lines[0])
         self.assertNotIn("r1", "".join(self.home.lines))  # no token in the log
+        self.assertNotIn("r1", open(os.path.join(self.cred_dir, login.VERIFIED)).read())  # fingerprints only
+
+    def test_an_operator_signed_in_to_the_profile_is_never_backed_up_or_restored(self):
+        self.guard(Auth(self.creds, expires_in=3000)).renew()  # the agent's login, confirmed and copied
+        self.store({"profile:caleb": CALEB, "profile:firstmate": OPERATOR})  # an operator signs the profile in as themself
+        self.home.me = OPERATOR_ID
+        self.guard(Auth(self.creds, expires_in=3000)).renew()
+        backup = load(os.path.join(self.cred_dir, login.BACKUP))
+        self.assertEqual(backup, {"profile:firstmate": FM})  # still the agent's
+        self.guard(Auth(self.creds, on_refresh=lambda s: {})).renew()  # the login is lost later
+        self.assertEqual(self.stored(), {"profile:firstmate": FM})  # put back as the agent, never as the operator
+        self.assertNotIn("or1", open(os.path.join(self.cred_dir, login.BACKUP)).read())
+
+    def test_a_confirmed_login_is_backed_up_without_reading_the_profile_again(self):
+        for _ in range(3):
+            self.guard(Auth(self.creds, expires_in=3000)).renew()
+        self.assertEqual(self.home.reads, 1)
+        self.guard(Auth(self.creds, on_refresh=rotated)).renew()  # new tokens: confirmed once more
+        self.assertEqual(self.home.reads, 2)
+        backup = load(os.path.join(self.cred_dir, login.BACKUP))
+        self.assertEqual(backup["profile:firstmate"]["refresh_token"], "r2")
+
+    def test_a_login_that_cannot_be_confirmed_is_not_backed_up(self):
+        self.home.me = None  # the profile read fails
+        self.guard(Auth(self.creds, expires_in=3000)).renew()
+        self.home.me, self.home.agent_id = AGENT_ID, None  # no "agent" in the config
+        g = self.guard(Auth(self.creds, expires_in=3000))
+        g.renew()
+        self.assertIsNone(g.agent)
+        self.assertFalse(os.path.exists(os.path.join(self.cred_dir, login.BACKUP)))
+        self.assertEqual(self.home.lines, [])
+
+    def test_an_older_copy_never_confirmed_as_the_agent_is_not_restored(self):
+        g = self.guard(Auth(self.creds, expires_in=3000))
+        g.write(os.path.join(self.cred_dir, login.BACKUP), {"profile:firstmate": OPERATOR})  # taken before this check
+        self.store({})
+        self.assertEqual(g.renew(), 0)
+        self.assertEqual(self.stored(), {})
+        self.assertIn("no backup copy can be restored", self.home.lines[-1])
+        self.verify(("profile:firstmate", OPERATOR, OPERATOR_ID))  # confirmed, but as another config's agent
+        self.guard(Auth(self.creds, expires_in=3000)).renew()
+        self.assertEqual(self.stored(), {})
 
     def test_a_network_down_run_leaves_the_file_untouched(self):
         before, mtime = open(self.creds, "rb").read(), os.stat(self.creds).st_mtime_ns
@@ -176,20 +242,20 @@ class GuardTest(unittest.TestCase):
         self.assertEqual(self.home.lines[-1], "login: renewal works again")
 
     def test_the_backup_keeps_another_profiles_entry_the_file_already_lost(self):
-        self.guard(Auth(self.creds, expires_in=3000)).renew()  # backs up both logins
+        self.caleb().renew()  # caleb's home copies its own login
+        self.guard(Auth(self.creds, expires_in=3000)).renew()  # firstmate's home copies its own beside it
         self.store({"profile:firstmate": FM})  # caleb's login lost elsewhere; this home backs up again
         self.guard(Auth(self.creds, expires_in=3000)).renew()
         backup = load(os.path.join(self.cred_dir, login.BACKUP))
         self.assertEqual(backup, {"profile:caleb": CALEB, "profile:firstmate": FM})
-        caleb = login.Login(Home(self.home_dir, profile="caleb"), runner=Auth(self.creds, profile="caleb", expires_in=3000),
-                            reach=lambda: True, now=lambda: NOW, cred_dir=self.cred_dir)
-        caleb.renew()  # caleb's home finds its login gone and gets it back from the backup firstmate's home kept
+        self.caleb().renew()  # caleb's home finds its login gone and gets it back from the shared backup
         self.assertEqual(self.stored(), {"profile:caleb": CALEB, "profile:firstmate": FM})
 
     def test_restore_marks_are_read_and_written_under_the_cli_locks_and_kept_per_profile(self):
         self.store({"profile:caleb": CALEB})
         login.Login(self.home, cred_dir=self.cred_dir).write(os.path.join(self.cred_dir, login.BACKUP),
                                                              {"profile:caleb": CALEB, "profile:firstmate": FM})
+        self.verify(("profile:caleb", CALEB, CALEB_ID), ("profile:firstmate", FM, AGENT_ID))
         held, outside = [], []
         real_lock, real_read = login.Login.cli_lock, login.Login.read
 
@@ -214,9 +280,7 @@ class GuardTest(unittest.TestCase):
         with mock.patch.object(login.Login, "cli_lock", lock), mock.patch.object(login.Login, "read", read):
             self.guard(Auth(self.creds, expires_in=3000)).renew()  # firstmate's login lost: put back, its mark kept
             self.store({"profile:firstmate": FM})
-            caleb = login.Login(Home(self.home_dir, profile="caleb"), runner=Auth(self.creds, profile="caleb", expires_in=3000),
-                                reach=lambda: True, now=lambda: NOW, cred_dir=self.cred_dir)
-            caleb.renew()
+            self.caleb().renew()
         self.assertEqual(outside, [])
         marks = load(os.path.join(self.cred_dir, login.RESTORED))
         self.assertEqual(set(marks), {"profile:firstmate", "profile:caleb"})
@@ -227,6 +291,7 @@ class GuardTest(unittest.TestCase):
         g = self.guard(Auth(self.creds, expires_in=3000))
         g.write(os.path.join(self.cred_dir, login.BACKUP), backup)
         g.write(os.path.join(self.cred_dir, login.RESTORED), {"profile:caleb": login.fingerprint(CALEB)})
+        self.verify(("profile:caleb", CALEB, CALEB_ID), ("profile:firstmate", FM, AGENT_ID))
         self.store({})
         self.guard(Auth(self.creds, expires_in=3000)).renew()
         self.assertEqual(self.stored(), {"profile:firstmate": FM})  # caleb's refused login stays out

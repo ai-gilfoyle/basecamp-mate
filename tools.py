@@ -398,7 +398,7 @@ class Tools:
                    + "basecamp auth login" + (f" -P {self.profile}" if self.profile else ""))
         try:
             me = self.bc("api", "get", "/my/profile.json") or {}
-        except RuntimeError as e:
+        except (RuntimeError, subprocess.TimeoutExpired) as e:
             return (f"login check: could not read who {login} is (/my/profile.json: {e}), so nothing ran; if it keeps "
                     f"failing, {relogin}")
         if self.profile:
@@ -416,12 +416,16 @@ class Tools:
             raise WrongLogin(why)
 
     def refused(self, what, who="captain"):
-        """True (logged) when a command must not post: no profile, or the profile is the owner."""
+        """True (logged) when a command must not post: no profile, the profile is the owner, or it is anyone but the
+        agent (the config's "agent"; the command's own login check, sync.py command(guard=True), refuses first)."""
         me = self.acting_id()
         if me == "retry":
             raise RuntimeError("acting identity unknown")
         if me is None or me == self.captain:
             self.log(f"{what}: acting user is the {who} or unset, not posting")
+            return True
+        if me != self.agent_id:
+            self.log(f"{what}: acting user {me} is not the agent ({self.agent_id}), not posting")
             return True
         return False
 

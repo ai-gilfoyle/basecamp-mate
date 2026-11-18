@@ -89,14 +89,21 @@ the agent reads only `/my/profile.json` and writes no state (an established home
 one), a matching sign-in runs as before, a sign-in that changes while the run waits for the
 state lock or for its run claim, an unreadable profile skipped (in a dry run too, writing
 nothing), a config without `agent` refused with or without a profile, a dry run that only
-prints, `backup`, `timesheet post` and `watch` refused as someone else, an `agent` that is
+prints, a profile read that times out, a lasting refusal logged once and then hourly (a new
+cause at once, and one line when the agent signs in again), `backup`, `timesheet post`,
+`watch` and every posting command (`reply`, `dismiss`, `todo`, `decide`, `ask`, `answer`,
+`post-message`, `schedule set`, `unmonitored handle`) refused as someone else or without
+`agent`, `refused()` comparing the login with the agent, an `agent` that is
 not a number refused, and `init` refusing a new home without `--agent`, recording only the
 `--agent` given or the config's, adding it to an older config without `--force` (never
 over an old `"listen": {"unmonitored": false}`), and refusing a login that signs in as
 someone else, and the sign-in command naming `BASECAMP_NO_KEYRING=1` only when the run had it;
 `tests/test_login.py` covers the login guard (`sync.py renew`) with a stubbed `basecamp auth`
 and a temporary `credentials.json`: a renewal that empties the file restored from the
-backup, a network-down run leaving the file untouched, only the lost profile put back beside
+backup (only the agent's own login), an operator signed in to the profile never backed up
+or restored, a confirmed login backed up again without another profile read, a login that
+cannot be confirmed (or a config without `agent`) not backed up, an older copy never
+confirmed as this config's agent not restored, a network-down run leaving the file untouched, only the lost profile put back beside
 another login's newer entry, a restored login lost again not restored twice, the backup
 retaken after a good renewal and keeping another profile's entry the file already lost, the
 restore marks read and written under the CLI's locks, an emptied file not bringing back

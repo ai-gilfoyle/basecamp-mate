@@ -4,7 +4,8 @@ agent and refuses a re-run signed in as someone else.
 
 The basecamp CLI is stubbed; nothing touches the network.
 """
-import io, json, os, sys, unittest
+import io, json, os, subprocess, sys, unittest
+from datetime import datetime, timedelta
 from unittest import mock
 from contextlib import redirect_stdout
 
@@ -28,6 +29,8 @@ class GuardStub(TodoStub):
     def __call__(self, cmd, **kw):
         out = super().__call__(cmd, **kw)
         if self.calls and self.calls[-1][:3] == ["api", "get", "/my/profile.json"]:
+            if self.profile_fails == "timeout":
+                raise subprocess.TimeoutExpired(cmd, 120)
             if self.profile_fails:
                 return type(out)(stdout=json.dumps({"ok": False, "error": "Not authenticated"}), stderr="", returncode=1)
             data = json.loads(out.stdout)
@@ -67,6 +70,16 @@ class Base(ToolBase):
 
     def failed(self):
         return [ln for ln in self.log().splitlines() if "FAILED" in ln]
+
+    def age_log(self, seconds):
+        """Move every line of sync.log `seconds` into the past."""
+        p = os.path.join(self.cfgdir, "sync.log")
+        lines = []
+        for ln in open(p).read().splitlines():
+            stamp, _, msg = ln.partition(" ")
+            at = datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ") - timedelta(seconds=seconds)
+            lines.append(f"{at.strftime('%Y-%m-%dT%H:%M:%SZ')} {msg}")
+        open(p, "w").write("\n".join(lines) + "\n")
 
 
 class TimerRun(Base):
@@ -113,11 +126,48 @@ class TimerRun(Base):
         [failed] = self.failed()
         self.assertIn(f"wrong login: the sign-in agent is Jay Park ({OTHER})", failed)
 
-    def test_each_refused_run_logs_its_line(self):
+    def test_a_lasting_refusal_is_logged_once_then_hourly_not_every_run(self):
         self.stub.me = OTHER
-        for _ in range(2):
-            self.run_timer()
+        out = io.StringIO()
+        with redirect_stdout(out):
+            for _ in range(3):
+                self.assertEqual(sync.cli(["--home", self.home, "--config", os.path.join(self.cfgdir, "config.json")],
+                                          runner=self.stub), 1)
+        self.assertEqual(len(self.failed()), 1)  # each FAILED line wakes firstmate: not 120 an hour
+        self.assertEqual(out.getvalue().count("FAILED wrong login"), 3)  # each run still says why on its output
+        self.age_log(3601)
+        self.run_timer()
         self.assertEqual(len(self.failed()), 2)
+
+    def test_a_new_cause_is_logged_at_once(self):
+        self.stub.me = OTHER
+        self.run_timer()
+        self.stub.profile_fails = True
+        self.run_timer()
+        first, second = self.failed()
+        self.assertIn("wrong login", first)
+        self.assertIn("login check: could not read", second)
+
+    def test_the_first_run_as_the_agent_again_says_so_once_and_a_later_refusal_is_logged_again(self):
+        self.stub.me = OTHER
+        self.run_timer()
+        self.stub.me = ACTING
+        for _ in range(2):
+            self.assertEqual(self.run_timer(), 0)
+        self.assertEqual(self.log().count(sync.AGENT_AGAIN), 1)
+        self.stub.me = OTHER
+        self.run_timer()
+        self.assertEqual(len(self.failed()), 2)
+
+    def test_a_profile_read_that_times_out_is_a_login_check_failure(self):
+        self.stub.profile_fails = "timeout"
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = sync.cli(["--home", self.home, "--config", os.path.join(self.cfgdir, "config.json"), "--dry-run"],
+                            runner=self.stub)
+        self.assertEqual(code, 1)
+        self.assertIn("FAILED login check: could not read who the sign-in agent is", out.getvalue())
+        self.assertEqual(sorted(os.listdir(self.cfgdir)), ["config.json"])  # a dry run writes nothing, sync.log too
 
     def test_the_sign_in_command_names_the_credential_store_the_run_used(self):
         self.stub.me = OTHER
@@ -213,12 +263,69 @@ class FeedCommands(Base):
             self.assertEqual(self.run_timer(*cmd), 1, cmd)
             self.assertEqual(self.stub.calls, [["api", "get", "/my/profile.json"]], cmd)
             self.assertEqual(self.snapshot(), before, cmd)
-        self.assertEqual(len(self.failed()), 3)
+        self.assertEqual(len(self.failed()), 1)  # the same cause, logged once
 
     def test_the_agent_runs_them(self):
         self.stub.me = ACTING
         self.assertEqual(self.run_timer("timesheet", "post"), 0)
         self.assertEqual(self.failed(), [])
+
+
+class PostingCommands(Base):
+    """Every command that posts to Basecamp, or records what the agent made of something there, makes the same check:
+    signed in as anyone else it would post under that person's name."""
+
+    def setUp(self):
+        super().setUp()
+        self.body = os.path.join(self.home, "body.md")
+        open(self.body, "w").write("Done.\n")
+        open(os.path.join(self.cfgdir, "unmonitored.json"), "w").write('{"comment.created/Document": {}}')
+        self.commands = (
+            ["reply", "--recording", "5", "--body-file", self.body],
+            ["dismiss", "--recording", "5"],
+            ["todo", "create", "--key", "k", "--title", "Merge?"],
+            ["todo", "track", "--key", "k", "--todo", "5"],
+            ["todo", "comment", "--todo", "k", "--body-file", self.body],
+            ["todo", "complete", "--todo", "k"],
+            ["todo", "subtask", "--todo", "k", "--number", "1"],
+            ["decide", "--on", "5", "--question", "Merge?", "--body-file", self.body],
+            ["ask", "--body-file", self.body],
+            ["answer", "--question", "5", "--body-file", self.body],
+            ["post-message", "--subject", "Report", "--body-file", self.body],
+            ["schedule", "set", "--dated", "due"],
+            ["unmonitored", "handle", "--key", "comment.created/Document", "--decision", "ignore them"],
+        )
+
+    def test_each_reads_only_the_profile_and_writes_nothing_as_anyone_else(self):
+        self.stub.me = OTHER
+        for cmd in self.commands:
+            self.stub.calls.clear()
+            before = self.snapshot()
+            self.assertEqual(self.run_timer(*cmd), 1, cmd)
+            self.assertEqual(self.stub.calls, [["api", "get", "/my/profile.json"]], cmd)
+            self.assertEqual(self.snapshot(), before, cmd)
+        [failed] = self.failed()
+        self.assertIn(f"wrong login: the sign-in agent is Jay Park ({OTHER})", failed)
+
+    def test_without_an_agent_too(self):
+        self.cfg(drop=("agent",))
+        for cmd in self.commands:
+            self.stub.calls.clear()
+            self.assertEqual(self.run_timer(*cmd), 1, cmd)
+            self.assertEqual(self.stub.calls, [], cmd)
+
+    def test_the_agent_runs_them(self):
+        self.assertEqual(self.run_timer("schedule", "set", "--dated", "due"), 0)
+        self.assertEqual(self.failed(), [])
+        self.assertIn("schedule: dated requests by default: due", self.log())
+
+    def test_refused_compares_the_login_with_the_agent(self):
+        self.stub.me = OTHER
+        with redirect_stdout(io.StringIO()):
+            self.assertTrue(self.sync().refused("post-message", "owner"))
+        self.assertIn(f"post-message: acting user {OTHER} is not the agent ({ACTING}), not posting", self.log())
+        self.stub.me = ACTING
+        self.assertFalse(self.sync().refused("post-message", "owner"))
 
 
 class Config(Base):

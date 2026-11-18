@@ -5,11 +5,16 @@
 store the `basecamp` CLI keeps every login in (`credentials.json` in its config directory,
 used with BASECAMP_NO_KEYRING=1):
 
-  - Before a renewal, a copy of the file is kept beside it (`credentials.json.basecamp-mate-backup`,
-    mode 0600), but only while the file still holds the profile. After a renewal that worked,
-    the copy is taken again, so it never holds a refresh token the renewal just spent. The copy
-    is shared by every home and login, so it is merged: an entry the file no longer holds stays
-    in the copy, and each entry the file does hold replaces the copy's.
+  - Before a renewal, the profile's entry is copied beside the file (`credentials.json.basecamp-mate-backup`,
+    mode 0600), but only while the file still holds it and only once the login is confirmed to
+    sign in as the agent (the config's "agent", read back from /my/profile.json): a login someone
+    else signed in to the profile is never copied, so it can never be restored either. Each copied
+    entry's fingerprint is marked as an agent's in `credentials.json.basecamp-mate-verified`, and
+    an entry whose fingerprint is marked already is copied without reading the profile again.
+    After a renewal that worked, the copy is taken again (one profile read for the new tokens),
+    so it never holds a refresh token the renewal just spent. The copy is shared by every home
+    and login, so it is merged: an entry the file no longer holds stays in the copy, and each
+    verified entry replaces the copy's.
   - Only the file store is guarded (BASECAMP_NO_KEYRING set, or `auth status` reporting
     "storage": "file"). A login kept in the system keyring is only renewed: the file does not
     hold it, so its absence there is no loss and no failure.
@@ -17,7 +22,9 @@ used with BASECAMP_NO_KEYRING=1):
     refused, and a store it could not read is saved back as `{}`), the missing entries are
     restored from the copy, and one line says so. Only the profile's own entry is put back
     while the file still holds other logins; when the whole file was emptied, every entry
-    the copy holds is.
+    the copy holds is. Either way, only an entry whose fingerprint is marked as a verified
+    agent login is put back (the profile's own only when it was verified as this config's
+    agent), so a copy an older version took of someone else's login stays out.
   - A copy is restored at most once (its fingerprint is kept in
     `credentials.json.basecamp-mate-restored`). If the restored login is refused again, it is
     not put back again: Basecamp bans a client and address after a handful of refused
@@ -42,6 +49,7 @@ REACH_TIMEOUT = 5  # seconds per host
 AUTH_TIMEOUT = 30  # seconds per `basecamp auth` call
 BACKUP = "credentials.json.basecamp-mate-backup"
 RESTORED = "credentials.json.basecamp-mate-restored"
+VERIFIED = "credentials.json.basecamp-mate-verified"
 OFFLINE = 75  # `sync.py renew` exit code: Basecamp unreachable, skip this run (EX_TEMPFAIL)
 
 
@@ -77,6 +85,8 @@ class Login:
         self.creds = os.path.join(self.dir, "credentials.json")
         self.backup = os.path.join(self.dir, BACKUP)
         self.restored = os.path.join(self.dir, RESTORED)
+        self.verified = os.path.join(self.dir, VERIFIED)
+        self.agent = getattr(tools, "agent_id", None)
 
     # --- the CLI's file store ---
 
@@ -240,19 +250,58 @@ class Login:
             self.note(failed=None)
         return 0
 
-    def keep(self):
-        """Back up credentials.json beside it (mode 0600) while it holds this profile. The backup is shared by every
-        home and login, so it is merged, not replaced: an entry the file no longer holds (another profile already
-        lost) stays in the backup, and every entry the file holds replaces the backup's. Read and written under the
-        CLI's store lock, so neither a CLI write nor another home's backup lands part-way through."""
+    def own(self, store):
+        """This config's login in `store` (a parsed credentials.json): the profile's entry, or every entry for the CLI's
+        default login; {} when `store` does not hold it."""
+        if not self.holds(store):
+            return {}
+        return {self.key: store[self.key]} if self.key else dict(store)
+
+    def mark(self, entry):
+        """What VERIFIED keeps for an entry confirmed to sign in as this config's agent: its fingerprint, not its tokens."""
+        return {"fingerprint": fingerprint(entry), "agent": self.agent}
+
+    def signs_in_as_agent(self):
+        """True when the login reads back as the config's "agent" (/my/profile.json, one try); False on any failure, and
+        always without an "agent"."""
+        if self.agent is None:
+            return False
         try:
+            me = self.t.bc("api", "get", "/my/profile.json", tries=1) or {}
+        except Exception:
+            return False
+        return isinstance(me, dict) and me.get("id") == self.agent
+
+    def keep(self):
+        """Back up this login's entry of credentials.json beside it (mode 0600), only once it is confirmed to sign in as
+        the agent: a login anyone else signed in to the profile is never copied (and so never restored). An entry
+        marked verified already (VERIFIED, by its fingerprint) is copied without reading the profile again. The backup
+        is shared by every home and login, so it is merged, not replaced: an entry the file no longer holds (another
+        profile already lost) stays in the backup. The profile is read outside the CLI's store lock (the CLI takes it
+        to read the file); the copy is then made under it, and only if the entry did not change meanwhile."""
+        try:
+            mine = self.own(self.read_store())
+            if not mine:
+                return
+            marks = self.read(self.verified) or {}
+            if any(marks.get(k) != self.mark(v) for k, v in mine.items()) and not self.signs_in_as_agent():
+                return
             with self.cli_lock("store.lock"):
-                now = self.read(self.creds)
-                if not self.holds(now):
-                    return
-                self.write(self.backup, {**(self.read(self.backup) or {}), **now})
+                if self.own(self.read(self.creds)) != mine:
+                    return  # signed in again while it was checked: the next run checks the new login
+                self.write(self.backup, {**(self.read(self.backup) or {}), **mine})
+                self.write(self.verified, {**(self.read(self.verified) or {}),
+                                           **{k: self.mark(v) for k, v in mine.items()}})
         except OSError as e:
             self.t.log(f"login: could not back up {self.creds}: {type(e).__name__}")
+
+    def trusted(self, backup):
+        """The entries of `backup` that may be restored: each one marked (VERIFIED) as copied from a login confirmed to
+        sign in as an agent, and this profile's own only as this config's agent."""
+        marks = self.read(self.verified) or {}
+        return {k: v for k, v in (backup or {}).items()
+                if isinstance(marks.get(k), dict) and marks[k].get("fingerprint") == fingerprint(v)
+                and (k != self.key or marks[k].get("agent") == self.agent)}
 
     def restore(self):
         """Put the missing login back from the backup, once per backup copy; True when it was put back.
@@ -263,13 +312,14 @@ class Login:
             now = self.read(self.creds)
             if self.holds(now):
                 return True  # something else put it back meanwhile
-            backup = self.read(self.backup)
-            if not self.holds(backup):
+            backup = self.read(self.backup) or {}
+            trusted = self.trusted(backup)
+            if not self.holds(trusted):
                 return False
             done = self.read(self.restored) or {}
             # Each entry is restored at most once per copy, by its own mark: one restored already and lost again
             # would only be refused again, whichever home's restore would bring it back.
-            fresh = {k: v for k, v in backup.items() if done.get(k) != fingerprint(v)}
+            fresh = {k: v for k, v in trusted.items() if done.get(k) != fingerprint(v)}
             if now:  # other logins are still there (only a profile's own can be missing from a non-empty file)
                 fresh = {k: v for k, v in fresh.items() if k == self.key}
             if (self.key not in fresh) if self.key else not fresh:
@@ -278,8 +328,10 @@ class Login:
                 what = f"{self.key} was missing; put it back"
             else:
                 what = f"the file was emptied; put back {', '.join(sorted(fresh))}"
-                skipped = sorted(set(backup) - set(fresh))
-                what += f" (not {', '.join(skipped)}: restored once already)" if skipped else ""
+                again, unverified = sorted(set(trusted) - set(fresh)), sorted(set(backup) - set(trusted))
+                skipped = ([f"not {', '.join(again)}: restored once already"] if again else []) + (
+                    [f"not {', '.join(unverified)}: never confirmed as an agent's login"] if unverified else [])
+                what += f" ({'; '.join(skipped)})" if skipped else ""
             self.write(self.creds, {**(now or {}), **fresh})
             self.write(self.restored, {**done, **{k: fingerprint(v) for k, v in fresh.items()}})
         self.t.log(f"login: restored {self.creds} from the copy kept before the renewal ({what})")

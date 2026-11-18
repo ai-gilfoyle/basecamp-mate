@@ -17,18 +17,25 @@ cap (the renewal gets at most 80 seconds, each `basecamp auth` call 30).
 minutes (by the token's own `expires_at`) and guards the login the `basecamp` CLI keeps in
 `credentials.json` (its file store, used with `BASECAMP_NO_KEYRING=1`):
 
-- Before a renewal it copies that file to `credentials.json.basecamp-mate-backup` beside it
-  (mode 0600), but only while the file still holds the profile. After a renewal that worked
-  it copies the file again, so the copy never holds a refresh token the renewal spent. Every
-  home and login shares the copy, so it is merged rather than replaced: an entry the file has
-  already lost stays in the copy.
+- Before a renewal it copies the profile's entry of that file to
+  `credentials.json.basecamp-mate-backup` beside it (mode 0600), but only while the file
+  still holds it and only once `/my/profile.json` confirms the login signs in as the
+  config's `agent`. A login someone else signed in to the profile is never copied, so it can
+  never be restored. Each copied entry's fingerprint (never its tokens) is marked in
+  `credentials.json.basecamp-mate-verified`, and an entry already marked is copied again
+  without reading the profile. After a renewal that worked it copies the entry again (one
+  profile read for the new tokens), so the copy never holds a refresh token the renewal
+  spent. Every home and login shares the copy, so it is merged rather than replaced: an
+  entry the file has already lost stays in the copy.
 - It guards only the file store: `BASECAMP_NO_KEYRING` is set, `auth status` reports
   `"storage": "file"`, or status names no store and the backup holds the login. A login kept
   in the system keyring is only renewed, even when an old file backup holds it.
 - Each entry is restored at most once per copy, by its own mark, so an emptied file never
   brings back another profile's login that was already restored and refused.
 - If the profile is missing after the renewal, it puts the missing entry back from the copy
-  (every entry when the whole file was emptied) and logs one `login: restored` line. It
+  (every entry when the whole file was emptied) and logs one `login: restored` line. Only
+  an entry marked as confirmed is put back (the profile's own only as this config's agent),
+  so a copy an older version took of someone else's login stays out. It
   does this once per copy: if the restored login is refused again, it logs one
   `FAILED token refresh` line naming the `basecamp auth login` to run and stops renewing,
   since Basecamp blocks an address after a handful of refused renewals.
@@ -69,9 +76,20 @@ from a retired `listen` that no longer has any effect); for a config with settin
 cannot reproduce, such as `"notifications": {"mark_read": false}` or an old
 `"listen": {"unmonitored": false}`, add the verified `agent` id to the existing config
 by hand, so those settings are kept. A dry run prints the line and writes nothing.
-When the right person signs in again, the next run carries on from the state the last good
-run left. `backup`, `timesheet post` and `watch` make the same check, before and inside the
-state lock. The check is the same with or without `profile`.
+
+Each FAILED line in `sync.log` wakes firstmate, and the timer runs every 30 seconds, so a
+refusal that lasts is logged once per cause (the same line) and then at most hourly; the
+runs in between only print it. A different cause is logged at once. The mark is the last
+such line in `sync.log` itself, so a refused run still writes no state.
+When the right person signs in again, the next run logs
+`login: the sign-in is the agent again; the sync runs` once and carries on from the state
+the last good run left.
+
+`backup`, `timesheet post`, `watch` and every command that posts or records what the agent
+made of something (`reply`, `dismiss`, `todo create|track|comment|complete|subtask`,
+`decide`, `ask`, `answer`, `post-message`, `schedule set`, `unmonitored handle`) make the
+same check, before and inside the state lock, so the agent never posts under someone
+else's name. The check is the same with or without `profile`.
 
 ## A dedicated Basecamp user
 
