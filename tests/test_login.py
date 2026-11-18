@@ -176,6 +176,19 @@ class GuardTest(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(self.cred_dir, login.BACKUP)))
         self.assertEqual(self.home.lines, [])
 
+    def test_the_default_login_copies_and_marks_only_its_own_entry_never_a_profiles(self):
+        self.caleb().renew()  # caleb's home copies and marks its own login
+        marks = os.path.join(self.cred_dir, login.VERIFIED)
+        caleb_mark = load(marks)["profile:caleb"]
+        self.store({"profile:caleb": CALEB, "default": FM})
+        home = Home(self.home_dir, profile=None)
+        login.Login(home, runner=Auth(self.creds, profile="caleb", expires_in=3000), reach=lambda: True,
+                    now=lambda: NOW, cred_dir=self.cred_dir).keep()
+        self.assertEqual(home.reads, 1)
+        self.assertEqual(load(marks)["profile:caleb"], caleb_mark)  # still caleb's agent, not this home's
+        self.assertEqual(load(marks)["default"]["agent"], AGENT_ID)
+        self.assertEqual(load(os.path.join(self.cred_dir, login.BACKUP)), {"profile:caleb": CALEB, "default": FM})
+
     def test_an_older_copy_never_confirmed_as_the_agent_is_not_restored(self):
         g = self.guard(Auth(self.creds, expires_in=3000))
         g.write(os.path.join(self.cred_dir, login.BACKUP), {"profile:firstmate": OPERATOR})  # taken before this check

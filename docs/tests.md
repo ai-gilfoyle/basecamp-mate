@@ -102,7 +102,8 @@ someone else, and the sign-in command naming `BASECAMP_NO_KEYRING=1` only when t
 and a temporary `credentials.json`: a renewal that empties the file restored from the
 backup (only the agent's own login), an operator signed in to the profile never backed up
 or restored, a confirmed login backed up again without another profile read, a login that
-cannot be confirmed (or a config without `agent`) not backed up, an older copy never
+cannot be confirmed (or a config without `agent`) not backed up, the default login (no
+`profile`) copying and marking only its own entry, never a named profile's, an older copy never
 confirmed as this config's agent not restored, a network-down run leaving the file untouched, only the lost profile put back beside
 another login's newer entry, a restored login lost again not restored twice, the backup
 retaken after a good renewal and keeping another profile's entry the file already lost, the

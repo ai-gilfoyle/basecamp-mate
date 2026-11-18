@@ -250,12 +250,17 @@ class Login:
             self.note(failed=None)
         return 0
 
+    def mine(self, key):
+        """Whether `key` (an entry of credentials.json) is this config's login: the profile's, or, for the CLI's default
+        login, any entry but a named profile's ("profile:<name>" is always another login's)."""
+        return key == self.key if self.key else not str(key).startswith("profile:")
+
     def own(self, store):
-        """This config's login in `store` (a parsed credentials.json): the profile's entry, or every entry for the CLI's
-        default login; {} when `store` does not hold it."""
+        """This config's login in `store` (a parsed credentials.json), the entries whose identity the profile read
+        checks; {} when `store` does not hold it."""
         if not self.holds(store):
             return {}
-        return {self.key: store[self.key]} if self.key else dict(store)
+        return {k: v for k, v in store.items() if self.mine(k)}
 
     def mark(self, entry):
         """What VERIFIED keeps for an entry confirmed to sign in as this config's agent: its fingerprint, not its tokens."""
@@ -297,11 +302,11 @@ class Login:
 
     def trusted(self, backup):
         """The entries of `backup` that may be restored: each one marked (VERIFIED) as copied from a login confirmed to
-        sign in as an agent, and this profile's own only as this config's agent."""
+        sign in as an agent, and this config's own (mine) only as this config's agent."""
         marks = self.read(self.verified) or {}
         return {k: v for k, v in (backup or {}).items()
                 if isinstance(marks.get(k), dict) and marks[k].get("fingerprint") == fingerprint(v)
-                and (k != self.key or marks[k].get("agent") == self.agent)}
+                and (not self.mine(k) or marks[k].get("agent") == self.agent)}
 
     def restore(self):
         """Put the missing login back from the backup, once per backup copy; True when it was put back.
