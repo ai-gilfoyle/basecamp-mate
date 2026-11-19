@@ -23,7 +23,9 @@
   non-zero exit) raises with the call, its endpoint, the CLI's error code and its exit
   status; a command then exits 1 with
   a FAILED line in `sync.log`. `todo complete` and `complete` read the to-do (card, step)
-  back and fail while Basecamp still shows it open, recording nothing. `todo subtask` reads
+  back and fail while Basecamp still shows it open, recording nothing; for a decision
+  `decide` put on a to-do or card, `todo complete` reads back only its decision steps,
+  and that to-do or card stays open. `todo subtask` reads
   back the subtask it completes, and the to-do too when that subtask was the last open one,
   so its exit 0 says the subtask is completed, and the to-do only when it was due to
   complete. All three also exit 1 when they completed nothing (a refused login, a closed
@@ -207,8 +209,8 @@
   id>` also completes a to-do the agent's login created in a to-do list the config's
   `decision_lists` names (in any project), and refuses any other to-do before it writes.
   A to-do `todos.json` tracks passes the same creator and list checks (for example a
-  decision to-do `decide` added a step to); `complete` also refuses it while Basecamp shows
-  one of its subtasks open, and records its open entry completed in `todos.json` once
+  decision to-do `decide` added a step to); `complete` refuses any to-do while Basecamp lists
+  one of its subtasks open (read live, not from `todos.json`), and and records its open entry completed in `todos.json` once
   Basecamp shows the to-do completed. A tracked to-do outside these lists keeps `todo
   complete`. To-dos are never
   deleted, trashed or archived. All of these post nothing with no profile or a profile

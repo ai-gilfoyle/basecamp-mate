@@ -92,12 +92,12 @@ back), a completion the read-back shows open failing non-zero, not retried by th
 completed when run again, a to-do already completed getting no write, a to-do outside the
 decision lists, created by someone else, or tracked in `todos.json` outside those lists
 refused, a tracked decision to-do in such a list completed and its open entry recorded
-completed only once Basecamp shows it completed, refused while Basecamp shows one of its
-subtasks open (named), only
+completed only once Basecamp shows it completed, refused while Basecamp lists one of its
+subtasks open (named, from the live list, so a step deleted there no longer blocks), only
 `<bucket>/<to-do id>` taken, `decision_lists` checked, the wrong login refused, a login that
 may not post failing non-zero, a dry run; `todo complete` recording nothing while the
 read-back shows the to-do open, completing again one recorded completed that Basecamp shows
-open, reading a request once before it writes, and failing non-zero for a login that may not post, a closed request, a request
+open, reading a request once before it writes, an id naming the open entry over an older one, and failing non-zero for a login that may not post, a closed request, a request
 reopened and assigned to someone else, or a decision with no step of its own; `todo subtask`
 recording nothing while the subtask shows open, completing again one unchecked in Basecamp,
 leaving the to-do open while Basecamp shows another subtask open or one checked there is not yet read, and, run again on the last

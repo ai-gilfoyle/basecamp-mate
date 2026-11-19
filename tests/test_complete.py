@@ -132,17 +132,27 @@ class Complete(Base):
         self.assertTrue(self.stub.todo_records[str(TODO)]["completed"])
         self.assertIn("completed", self.state("todos.json")["decision-merge"])
 
-    def test_a_tracked_decision_todo_with_an_open_subtask_is_refused_naming_it(self):
-        self.side("todos.json", {"ta-x": {"todo": TODO, "bucket": BUCKET, "subtasks": [
-            {"text": "Merge the fix?", "done": "2026-11-19T10:00:00Z", "id": 7},
-            {"text": "Ship it today?", "done": None, "id": 8}]}})
-        self.stub.subtasks_done.add("7")
+    def test_a_todo_basecamp_lists_an_open_subtask_of_is_refused_naming_it(self):
+        # an older entry's step reopened in Basecamp: the live list, not todos.json, decides
+        self.side("todos.json", {"a-old": {"todo": TODO, "bucket": BUCKET, "on": True, "completed": "2026-11-18T10:00:00Z",
+                                           "subtasks": [{"text": "Merge the fix?", "done": "t", "id": 7, "decider": CAPTAIN}]},
+                                 "z-current": {"todo": TODO, "bucket": BUCKET, "on": True,
+                                               "subtasks": [{"text": "Ship it today?", "done": "t", "id": 8,
+                                                             "decider": CAPTAIN}]}})
+        self.stub.subtask_lists[str(TODO)] = [{"id": 7, "title": "Merge the fix?"}, {"id": 8, "title": "Ship it today?"}]
+        self.stub.subtasks_done.add("8")
         code, _ = self.cli("complete", "--todo", REF)
         self.assertEqual(code, 1)
-        self.assertIn("Basecamp shows its subtask 2 ('Ship it today?') open: finish it with "
-                      "`todo subtask --todo ta-x --number 2` first", self.log())
+        self.assertIn("Basecamp shows its subtask 1 ('Merge the fix?') open: finish it first", self.log())
         self.assertEqual(self.made("todos complete"), [])
-        self.assertNotIn("completed", self.state("todos.json")["ta-x"])
+        self.assertNotIn("completed", self.state("todos.json")["z-current"])
+
+    def test_a_saved_step_deleted_in_basecamp_does_not_block_completion(self):
+        self.side("todos.json", {"ta-x": {"todo": TODO, "bucket": BUCKET, "subtasks": [
+            {"text": "Merge the fix?", "done": None, "id": 7}]}})
+        self.stub.subtask_lists[str(TODO)] = []
+        self.assertEqual(self.cli("complete", "--todo", REF)[0], 0, self.log())
+        self.assertIn("completed", self.state("todos.json")["ta-x"])
 
     def test_the_open_entry_is_recorded_when_an_older_entry_tracks_the_same_todo(self):
         self.side("todos.json", {"a-old": {"todo": TODO, "bucket": BUCKET, "on": True, "subtasks": [],
@@ -227,6 +237,16 @@ class TodoCompleteReadBack(Base):
         self.assertEqual(self.cli("todo", "complete", "--todo", "request-42")[0], 1)
         self.assertIn("no longer shows the request active and assigned to you", self.log())
         self.assertEqual(self.made("todos complete"), [])
+
+    def test_an_id_names_the_open_entry_when_an_older_one_tracks_the_same_todo(self):
+        self.side("todos.json", {"a-old": {"todo": 77, "on": True, "completed": "2026-11-18T10:00:00Z",
+                                           "subtasks": [{"text": "Old?", "done": "t", "id": 7, "decider": CAPTAIN}]},
+                                 "z-current": {"todo": 77, "on": True,
+                                               "subtasks": [{"text": "New?", "done": None, "id": 8, "decider": CAPTAIN}]}})
+        self.stub.subtasks_done.add("7")
+        self.assertEqual(self.cli("todo", "complete", "--todo", "77")[0], 0, self.log())
+        self.assertEqual(self.made("subtasks complete"), [["subtasks", "complete", "8"]])
+        self.assertIn("completed", self.state("todos.json")["z-current"])
 
     def test_a_request_is_read_once_before_it_is_completed(self):
         self.stub.todo_records["42"] = {"id": 42, "content": "Do it", "completed": False, "status": "active",
@@ -414,6 +434,24 @@ class ReplyReadBack(Base):
             self.sync().reply(1, boost="Done")
         self.assertIn("already replied, but Basecamp still shows 👀 boost 5", str(e.exception))
         self.assertEqual(self.stub.deletes(), [])
+
+    def test_a_text_reply_drops_the_boost_an_earlier_reply_kept(self):
+        self.stub.boosts["1"] = [{"id": 5, "booster": {"id": ACTING}, "content": "👀"}]
+        self.side("chats.json", {"77": {"lines": [1], "replied": [1], "answers": {"1": 5}}})
+        real = self.stub.__call__
+
+        def keep(cmd, **kw):
+            if "delete" in cmd:  # answers ok, but the boost stays
+                return SimpleNamespace(stdout=json.dumps({"ok": True, "data": None}), stderr="", returncode=0)
+            return real(cmd, **kw)
+        s = self.sync()
+        s.run = keep
+        with self.assertRaises(RuntimeError):
+            s.reply(1, "Yes.", again=True)
+        self.assertNotIn("1", self.state("chats.json")["77"].get("answers", {}))
+        self.assertFalse(self.sync().reply(1, "Yes."))
+        self.assertIn("Basecamp shows 👀 boost 5 on it", self.log())
+        self.assertNotIn("Basecamp shows no 👀 left", self.log())
 
     def test_a_retried_boost_reply_leaves_its_answer_and_reports_success(self):
         # Answered with the read boost itself: kept as the answer, then the reply is run again.

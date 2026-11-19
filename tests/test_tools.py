@@ -21,6 +21,7 @@ class TodoStub(Stub):
         self.inputs, self.todo_records, self.fail_create = [], {}, False
         self.card_records = {}  # card id -> its record, for the cards `cards create` made here (`cards done` completes one)
         self.subtasks_done = set()  # the subtask ids `subtasks complete` completed, as `subtasks show` reads them back
+        self.subtask_lists = {}  # to-do id -> the subtasks `subtasks create` put on it, as `subtasks list` lists them
         self.notes, self.note_ids, self.inbox_exit = [], {}, 0  # fm-inbox.sh notes (request id, body, FM_HOME)
 
     def __call__(self, cmd, **kw):
@@ -39,7 +40,7 @@ class TodoStub(Stub):
         if cmd[0] == "basecamp":
             args = cmd[3:-3]
             core = args[2:] if args[:1] == ["-P"] else args
-            mine = (core[:2] in (["todos", "create"], ["todos", "complete"], ["subtasks", "create"], ["subtasks", "complete"], ["subtasks", "show"], ["comments", "create"], ["messages", "create"])
+            mine = (core[:2] in (["todos", "create"], ["todos", "complete"], ["subtasks", "create"], ["subtasks", "complete"], ["subtasks", "show"], ["subtasks", "list"], ["comments", "create"], ["messages", "create"])
                     or (core[:2] == ["api", "get"] and "/todos/" in core[2]))
             if core[:2] == ["cards", "create"]:
                 out = super().__call__(cmd, **kw)
@@ -74,7 +75,11 @@ class TodoStub(Stub):
         if core[:2] == ["messages", "create"]:
             return {"ok": True, "data": {"id": self.next_id, "app_url": f"https://x/messages/{self.next_id}"}}
         if core[:2] == ["subtasks", "create"]:
+            self.subtask_lists.setdefault(core[2], []).append({"id": self.next_id, "title": core[3]})
             return {"ok": True, "data": {"id": self.next_id, "title": core[3], "completed": False}}
+        if core[:2] == ["subtasks", "list"]:
+            return {"ok": True, "data": [dict(q, completed=str(q["id"]) in self.subtasks_done)
+                                         for q in self.subtask_lists.get(core[2], [])]}
         if core[:2] == ["subtasks", "complete"]:
             self.subtasks_done.add(core[2])
             return {"ok": True, "data": None}

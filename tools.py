@@ -2912,11 +2912,12 @@ class Tools:
         return True
 
     def tracked(self, ref):
-        """The (key, record) of a tracked to-do, by key or by to-do id."""
+        """The (key, record) of a tracked to-do, by key or by to-do id (an id: its open entry first, when one is)."""
         state = self.load("todos.json", {})
         if ref in state:
             return ref, state[ref]
-        hit = next(((k, r) for k, r in state.items() if str(r["todo"]) == str(ref)), None)
+        hits = [(k, r) for k, r in state.items() if str(r["todo"]) == str(ref)]
+        hit = next((h for h in hits if not h[1].get("completed") and not h[1].get("closed")), hits[0] if hits else None)
         if hit is None:
             raise RuntimeError(f"no tracked to-do {ref} in todos.json")
         return hit
@@ -3009,8 +3010,8 @@ class Tools:
         """Complete the decision to-do `ref` (`<bucket>/<to-do id>`): one the agent's login created, in a to-do list the
         config's "decision_lists" names (in any project of the account). It completes it, then reads it back and raises
         unless Basecamp shows it completed; the agent retries a failure itself. Any other to-do is refused (raised)
-        before anything is written; one todos.json tracks outside those lists keeps `todo complete`, and a tracked one
-        Basecamp shows a subtask of open is refused until `todo subtask` finishes it. A tracked one that passes is
+        before anything is written; one todos.json tracks outside those lists keeps `todo complete`, and one Basecamp
+        lists an open subtask of (read live, not from todos.json) is refused until that subtask is finished. A tracked one that passes is
         recorded completed in todos.json (its open entry for that project and to-do). A to-do Basecamp already shows completed gets no write. True once
         Basecamp shows it completed; False for a dry run, which reads and logs only."""
         m = re.fullmatch(r"(\d+)/(\d+)", str(ref).strip())
@@ -3035,11 +3036,10 @@ class Tools:
         if todo.get("completed"):
             self.log(f"{name}: already completed in Basecamp")
         else:
-            subtasks = self.load("todos.json", {})[key].get("subtasks") or [] if key is not None else []
-            for n, q in enumerate(subtasks, 1):
-                if not self.todo(q["id"], bucket, "subtask").get("completed"):
-                    raise ValueError(f"{name}: Basecamp shows its subtask {n} ({q.get('text')!r}) open: finish it with "
-                                     f"`todo subtask --todo {key} --number {n}` first")
+            for n, q in enumerate(self.bc("subtasks", "list", str(tid), "--all", project=bucket) or [], 1):
+                if not q.get("completed"):
+                    raise ValueError(f"{name}: Basecamp shows its subtask {n} ({q.get('title') or q.get('content')!r}) "
+                                     "open: finish it first (with `todo subtask` when todos.json tracks the to-do)")
             if self.refused(name, "owner"):
                 raise RuntimeError(f"{name}: the login may not post, so it was not completed")
             if self.dry:
@@ -3446,9 +3446,11 @@ def outcome_applies(ev, item):
 
 def keep_answer(rec, rid, answer):
     """Keep `answer`, the id of the boost that answered `rid`, in reply state `rec` ("answers"), so a retried reply
-    never removes it; a comment or line answer keeps nothing."""
+    never removes it; a comment or line answer keeps nothing, and drops the boost an earlier reply kept."""
     if answer is not None:
         rec.setdefault("answers", {})[str(rid)] = answer
+    else:
+        (rec.get("answers") or {}).pop(str(rid), None)
 
 
 def item_recording(rec):

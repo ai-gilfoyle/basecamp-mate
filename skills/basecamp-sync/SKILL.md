@@ -147,11 +147,12 @@ on it (relaying first if this is not the main firstmate's home), then
 `sync.py todo complete --todo <key>`. A decision to-do you created in a to-do list the config's
 `decision_lists` names, tracked in `todos.json` or not, is completed with
 `sync.py complete --todo <bucket>/<to-do id>`, which completes the to-do and reads it back;
-it refuses a tracked to-do while Basecamp shows one of its subtasks open and names that subtask, so
+it refuses a to-do while Basecamp lists one of its subtasks open and names that subtask, so
 finish each with `sync.py todo subtask` first. Never complete one with the `basecamp` CLI. These commands do not retry a failed completion:
 you run the command again until it exits 0. Complete a decision to-do once you have acted on the answer, not
 when it arrives. Both commands exit 1 with a FAILED line while Basecamp still shows the to-do
-open: it is not done, so never report it done. Feedback that is not a decision: act on it and
+open (for a decision `decide` put on a to-do or card, `todo complete` completes and reads back only its
+decision steps, and that to-do or card stays open): it is not done, so never report it done. Feedback that is not a decision: act on it and
 answer with `sync.py reply --recording <comment id>`; the to-do stays open. Complete a
 to-do settled another way (the captain merged the PR themselves). Adopt one made by hand with
 `sync.py todo track --key <key> --todo <id>`.

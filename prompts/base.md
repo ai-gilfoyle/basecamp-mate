@@ -230,8 +230,8 @@ defaults: what the sync enforces is changed in the config, and only when the cap
   recorded comment or mention, with `reply`.
 - Once you have acted on the answer to a decision to-do, complete it: `complete --todo <bucket>/<to-do id>`
   when you created it in a list `decision_lists` names (tracked or not), else `todo complete` (or
-  `todo subtask`) when `todos.json` tracks it. `complete` refuses a tracked to-do while Basecamp shows
-  one of its subtasks open, and names it: finish that one with `todo subtask` first.
+  `todo subtask`) when `todos.json` tracks it. `complete` refuses a to-do while Basecamp lists
+  one of its subtasks open, and names it: finish that one first (with `todo subtask` when it is tracked).
 - A command that exits non-zero logs a FAILED line naming the call. Never report its work
   done. Part of it may have happened. If a `reply` failed before it confirmed its post (no
   answer, a timeout, or an answer without an id), the post may exist: look in Basecamp
@@ -239,8 +239,9 @@ defaults: what the sync enforces is changed in the config, and only when the cap
   post was recorded (taking the read boost off), run it again without `--again`: on an
   item already replied to it posts nothing and removes nothing, and only checks and
   reports the read boost (with `--again` it would post a second reply). For other
-  commands, fix the cause and run the same command again. `todo complete` and `complete` read the to-do back, so exit 0
-  means Basecamp shows it completed. `todo subtask` exit 0 means Basecamp shows that
+  commands, fix the cause and run the same command again. `todo complete` and `complete` read back what they complete, so exit 0
+  means Basecamp shows it completed: the to-do, or, for a decision `decide` put on a to-do or card,
+  only its decision steps (that to-do or card stays open). `todo subtask` exit 0 means Basecamp shows that
   subtask completed, and the to-do too only when it was the last open subtask of a decision
   to-do. These commands do not retry a failed completion for you: run the command again until it
   exits 0.
