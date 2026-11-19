@@ -16,11 +16,11 @@ which runs a crew of other agents on your Linux computer.
   with the context, the options and what it recommends. Your comment or boost on that
   to-do is your answer, and it reaches the agent in about half a minute. Once the agent has
   acted on your answer (not when the answer arrives), it completes the to-do with
-  `sync.py complete --todo <project id>/<to-do id>` (for a to-do it created, in a list named
-  in the config's `decision_lists`), which completes the to-do and reads it back: if
-  Basecamp does not show it completed, the command exits 1 with a clear message and logs a
-  FAILED line, so a failure is never silent. The agent then runs it again until it succeeds;
-  the command does not retry it on its own.
+  `sync.py todo complete`, which completes the to-do and reads it back: if Basecamp does not
+  show it completed, the command exits 1 with a clear message and logs a FAILED line, so a
+  failure is never silent. The agent then fixes the cause and runs it again; the command
+  does not retry it on its own. A decision to-do made some other way is first adopted with
+  `sync.py todo track`, then completed the same way.
 - **Chat with your agent.** Ask it something in the project's chat and it answers there.
   Turn on Pings and to-do requests, and you can also message it directly or assign it a
   to-do: it takes the work on, comments as it goes and completes the to-do when it is done.

@@ -44,15 +44,6 @@ or by hand from
   go elsewhere with `todo create --project`, `--list` or `--card-table --column` (a card);
   its comments, boosts, replies and completion then happen in that project, and its
   notifications are this home's.
-- `decision_lists` (optional): a list of to-do list ids, e.g. `[10525772928]`, in any
-  project of the account: the lists that hold the agent's decision to-dos made outside
-  `todo create`. `sync.py complete --todo <bucket>/<to-do id>` completes only a to-do in one
-  of them that the agent's login created. A tracked one that passes these checks (for
-  example a decision to-do `decide` added a step to) is also recorded completed in
-  `todos.json`. While Basecamp lists one of a to-do's subtasks open, `complete` refuses it
-  and names that subtask by its title and Basecamp id, even when the to-do is already
-  completed. A tracked to-do outside these lists uses `todo complete`. Absent or empty,
-  `complete` refuses every to-do.
 - `message_board` (optional): the message board id `sync.py post-message` posts on; the
   owner's boosts on the agent's messages there are relayed.
 - `timezone` (optional): an IANA zone name (like `America/Chicago`) for the times the sync
@@ -131,17 +122,17 @@ claim, in `~/.local/state/basecamp-mate/runs/`; see [One home per project and lo
 
 | File | Kept by | Purpose |
 | --- | --- | --- |
-| `map.json` | the script (card mirror) | task/board -> card id, column, assignment, content digest, linked boards, seen comments and boosts, acknowledgement boosts queued and done, questions replied to and the boost that answered each (`answers`) |
+| `map.json` | the script (card mirror) | task/board -> card id, column, assignment, content digest, linked boards, seen comments and boosts, acknowledgement boosts queued and done, questions replied to and how each was answered (`answers`: the boost that answered it, or none for a comment or line) |
 | `releases.json` | the script | GitHub repo -> when the watch started (`since`), the tags seeded then, and the tags announced (tag -> message id) |
-| `chats.json` | the script (and `sync.py watch`) | chat id -> line cursor, captured question lines, acknowledgement boosts queued and done, questions replied to and the boost that answered each (`answers`) (a chat nothing relays holds only the mentions recorded there); for a chat in another project, its `bucket` and `project_name`; for a watched chat, `watch` (`after`, `until`, `since`) |
+| `chats.json` | the script (and `sync.py watch`) | chat id -> line cursor, captured question lines, acknowledgement boosts queued and done, questions replied to and how each was answered (`answers`: the boost that answered it, or none for a comment or line) (a chat nothing relays holds only the mentions recorded there); for a chat in another project, its `bucket` and `project_name`; for a watched chat, `watch` (`after`, `until`, `since`) |
 | `checkins.json` | the script | check-in question id -> dates recorded as due (`recorded`) and dates answered (`answered`) |
 | `inbox.json` | the script | the line cursor of `pending-comments.jsonl` delivered to the inbox, and request ids whose failure was logged |
 | `session-alert.json` | the script | the session alert posted for the current outage (when, its line id, how many notes waited); empty while a session holds the lock |
-| `messages.json` | the script | per agent message: comment cursor, owner comments recorded, acknowledgement boosts queued and done, comments replied to and the boost that answered each (`answers`); boost counts and boosts seen on the messages and their comments |
+| `messages.json` | the script | per agent message: comment cursor, owner comments recorded, acknowledgement boosts queued and done, comments replied to and how each was answered (`answers`: the boost that answered it, or none for a comment or line); boost counts and boosts seen on the messages and their comments |
 | `notifications.json` | the script | per notification id, its cursor (`unread_at` when last handled, empty while its first handling keeps failing); when it last read `/my/readings.json`; the boost ids seen in `/my/boosts.json`; ids whose mark-read failed, to retry |
 | `timer.json` | the script | when each behavior's timer step last ran (`ran`), for its cadence; while refused as a duplicate run, the homes it overlaps and when that was last logged (`duplicate`) |
-| `threads.json` | the script | per followed thread (`<bucket>:<recording>`): its type and title, comment cursor, owner comments recorded, acknowledgement boosts queued and done, boost counts and boosts seen, comments replied to and the boost that answered each (`answers`), attachment-only comments folded into a relayed note (`folded`), and, after `reply --awaiting`, the answer awaited (`awaiting`: the agent's comment, `at`, `until`) |
-| `pings.json` | the script | `since` (the Ping reader's first run) and, per Ping chat id, its bucket, title, URL, line cursor, owner lines recorded, acknowledgement boosts queued and done, boost counts and boosts seen, lines replied to and the boost that answered each (`answers`), and `people`: the ids of the others in it as the reader last saw them, the only people a reply there may @mention |
+| `threads.json` | the script | per followed thread (`<bucket>:<recording>`): its type and title, comment cursor, owner comments recorded, acknowledgement boosts queued and done, boost counts and boosts seen, comments replied to and how each was answered (`answers`: the boost that answered it, or none for a comment or line), attachment-only comments folded into a relayed note (`folded`), and, after `reply --awaiting`, the answer awaited (`awaiting`: the agent's comment, `at`, `until`) |
+| `pings.json` | the script | `since` (the Ping reader's first run) and, per Ping chat id, its bucket, title, URL, line cursor, owner lines recorded, acknowledgement boosts queued and done, boost counts and boosts seen, lines replied to and how each was answered (`answers`: the boost that answered it, or none for a comment or line), and `people`: the ids of the others in it as the reader last saw them, the only people a reply there may @mention |
 | `unmonitored.json` | the script | unmonitored key -> the first notification (or boost) and recording recorded, when, how many were seen, and the owner's decision once handled |
 | `backup.json` | the script | per backed-up file: its upload id in the backup folder, the SHA-256 of the content last uploaded, and when |
 | `timesheet.json` | `sync.py timesheet` and the script | per key (`items`): its to-do or card (`on`) and the transcript sources counted, each with `from` and `to`, and `settled` once it stopped and every day is posted; the days of a stopped key that wait on a refusal (`unposted`: day -> hours, posted from there; its sources then marked `counted`, not read again); a settled key is not read again; per key and day, each entry posted (`posted`: hours, entry id, URL, when); keys reported as unmapped (`unmapped`); projects reported as refusing entries (`refused`: the error, and `probed`, the local day of its last try); keys whose to-do or card was not found (`missing`: the same) |
@@ -150,7 +141,7 @@ claim, in `~/.local/state/basecamp-mate/runs/`; see [One home per project and lo
 | `sync.lock` | the script | the shared state lock held by a timer run or a command |
 | `participants.json` | the script | the project's non-client person ids, as last read for `"participants": {"project": true}` |
 | `companies.json` | the script | person id -> their company id, as last read for `"participants": {"company"}` |
-| `todos.json` | the script | to-do key -> to-do id, title, URL, created and completed times, comment cursor, owner comments recorded, acknowledgement boosts queued and done, comments replied to and the boost that answered each (`answers`); for a to-do request (`request-<id>`), also who assigned it (`request`), how many times it was assigned (`requests`), a digest of its name and description, the project it is in (`bucket`, `project_name`), and why it closed (`closed`) |
+| `todos.json` | the script | to-do key -> to-do id, title, URL, created and completed times, comment cursor, owner comments recorded, acknowledgement boosts queued and done, comments replied to and how each was answered (`answers`: the boost that answered it, or none for a comment or line); for a to-do request (`request-<id>`), also who assigned it (`request`), how many times it was assigned (`requests`), a digest of its name and description, the project it is in (`bucket`, `project_name`), and why it closed (`closed`) |
 | `assigned-todos.json` | the script | `ignored`: to-dos assigned to the acting login whose creator is not listened to, so the sweep fetches each once |
 | `sync.log` | the script | one line per action, plus a counts line per run |
 | `pending-comments.jsonl` | the script | captain comments and approvals waiting to be relayed, one JSON record per line (see [Pending records](records.md)) |

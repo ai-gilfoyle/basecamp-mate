@@ -152,11 +152,6 @@ class Tools:
         self.ask_chat = str(cfg["ask_chat"]) if cfg.get("ask_chat") is not None else None
         self.checkins = cfg.get("checkins")
         self.todos = cfg.get("todos")
-        # "decision_lists": the to-do lists whose to-dos `sync.py complete` may complete (the agent's decision to-dos).
-        lists = cfg.get("decision_lists", [])
-        if not isinstance(lists, list) or not all(str(x).isdigit() for x in lists):
-            raise ValueError('config "decision_lists" must be a list of to-do list ids')
-        self.decision_lists = {str(x) for x in lists}
         self.assigned_todos = cfg.get("assigned_todos") not in (None, False)
         # "account": to-dos assigned to the acting user in any project of the account are requests; else this project's.
         self.assigned_scope = (cfg.get("assigned_todos") or {}).get("scope", "project") \
@@ -2466,11 +2461,12 @@ class Tools:
         return True
 
     def reply_again(self, rid, bucket, rec):
-        """`reply` on `rid`, already replied to (`rec` holds its reply), without `again`: nothing is posted or removed. It
-        only reads the boosts on `rid` back and reports: it raises while Basecamp still shows the acting user's read
-        boost there (other than the boost that answered `rid`, which `rec` "answers" keeps), else logs that it is off.
-        A reply whose state keeps no answer (one made before "answers", or with a comment or line) may have answered
-        with that very boost, so a boost left there is only reported, with its role unknown. False: nothing was posted."""
+        """`reply` on `rid`, already replied to (`rec` holds its reply), without `again`: nothing is posted. It reads the
+        boosts on `rid` back. A read boost of the acting user left there (one an earlier reply failed to take off) is
+        taken off again when `rec` "answers" says how `rid` was answered (a boost id, kept, or None for a comment or
+        line), and read back: it raises while Basecamp still shows it. A reply whose state keeps no answer (one made
+        before "answers") may have answered with that very boost, so a boost left there is only reported, with its
+        role unknown, and nothing is removed. False: nothing was posted."""
         emoji = self.read_ack()
         answers = rec.get("answers") or {}
         answer = answers.get(str(rid))
@@ -2479,10 +2475,17 @@ class Tools:
             self.log(f"reply {rid}: already replied; Basecamp shows {emoji} boost {', '.join(map(str, left))} on it, "
                      "which may be the answer itself (this reply's state does not say); nothing was posted or removed")
             return False
-        if left:
+        if not left:
+            self.log(f"reply {rid}: already replied (pass --again to post another); Basecamp shows no {emoji} left on it")
+            return False
+        if self.refused(f"reply {rid}"):
             raise RuntimeError(f"reply {rid}: already replied, but Basecamp still shows {emoji} boost "
-                               f"{', '.join(map(str, left))} on it; nothing was posted or removed")
-        self.log(f"reply {rid}: already replied (pass --again to post another); Basecamp shows no {emoji} left on it")
+                               f"{', '.join(map(str, left))} on it, and this login may not take it off")
+        if self.dry:
+            self.log(f"dry reply {rid}: already replied; take {emoji} boost {', '.join(map(str, left))} off it")
+            return False
+        self.log(f"reply {rid}: already replied (nothing posted); taking the {emoji} left on it off again")
+        self.remove_eyes(rid, bucket, answer)
         return False
 
     @staticmethod
@@ -2949,7 +2952,9 @@ class Tools:
         shows every one completed (also when it already did, even when todos.json said so before); False, logged, when
         nothing was completed (a closed request, a request Basecamp no longer shows active and assigned to the agent, a
         decision with no step to complete, a login that may not post, a dry run). A to-do recorded completed that
-        Basecamp shows open is completed again."""
+        Basecamp shows open is completed again. The agent's own to-do (not a request, not a decision put on someone
+        else's) is refused, raised, while Basecamp lists one of its subtasks open (read live, so one the owner added
+        counts too)."""
         self.need_todos()
         key, rec = self.tracked(ref, open_first=True)
         name = f"todo complete {key}"
@@ -2975,6 +2980,12 @@ class Tools:
             if not rec.get("completed") and not self.dry:
                 self.record_completed(key, "todo complete")
             return True
+        if not rec.get("on") and not rec.get("request") and (rec.get("type") or "todo") == "todo":
+            for q in self.live_subtasks(rec["todo"], bucket).values():
+                if not q.get("completed"):
+                    raise RuntimeError(f"{name}: Basecamp shows its subtask {q.get('id')} "
+                                       f"({q.get('title') or q.get('content')!r}) open, so the to-do was not completed: "
+                                       "finish that subtask first")
         if rec.get("completed"):
             self.log(f"{name}: recorded completed {rec['completed']}, but Basecamp shows it open: completing it again")
         if self.refused(name, "owner"):
@@ -3010,59 +3021,14 @@ class Tools:
             raise RuntimeError(f"{what}: Basecamp still shows {kind} {tid} open after the completion call "
                                f"(status {got.get('status')!r}); it was not completed")
 
-    def complete(self, ref):
-        """Complete the decision to-do `ref` (`<bucket>/<to-do id>`): one the agent's login created, in a to-do list the
-        config's "decision_lists" names (in any project of the account). It completes it, then reads it back and raises
-        unless Basecamp shows it completed; the agent retries a failure itself. Any other to-do is refused (raised)
-        before anything is written; one todos.json tracks outside those lists keeps `todo complete`, and one Basecamp
-        lists an open subtask of (read live, not from todos.json) is refused until that subtask is finished. A tracked one that passes is
-        recorded completed in todos.json (its open entry for that project and to-do). A to-do Basecamp already shows completed gets no write. True once
-        Basecamp shows it completed; False for a dry run, which reads and logs only."""
-        m = re.fullmatch(r"(\d+)/(\d+)", str(ref).strip())
-        if not m:
-            raise ValueError(f"{ref!r} is not a to-do: give <bucket>/<to-do id>")
-        bucket, tid = m.group(1), int(m.group(2))
-        name = f"complete {bucket}/{tid}"
-        key = next((k for k, r in self.load("todos.json", {}).items()
-                    if str(r.get("todo")) == str(tid) and str(r.get("bucket") or self.project) == bucket
-                    and not r.get("completed") and not r.get("closed")), None)
-        todo = self.todo(tid, bucket)
-        parent = (todo.get("parent") or {}).get("id")
-        if str(parent) not in self.decision_lists:
-            if key is not None:
-                raise ValueError(f"{name}: todos.json tracks it as {key}: complete it with `todo complete --todo {key}`")
-            raise ValueError(f'{name}: its to-do list {parent} is not in the config\'s "decision_lists", so it is not '
-                             "the agent's to complete")
-        creator = (todo.get("creator") or {}).get("id")
-        if self.agent_id is None or creator != self.agent_id:
-            raise ValueError(f"{name}: it was created by {creator}, not the agent's login ({self.agent_id}), so it is "
-                             "not the agent's to complete")
-        for q in self.live_subtasks(tid, bucket).values():
-            if not q.get("completed"):
-                raise ValueError(f"{name}: Basecamp shows its subtask {q.get('id')} "
-                                 f"({q.get('title') or q.get('content')!r}) open: finish it first")
-        if todo.get("completed"):
-            self.log(f"{name}: already completed in Basecamp")
-        else:
-            if self.refused(name, "owner"):
-                raise RuntimeError(f"{name}: the login may not post, so it was not completed")
-            if self.dry:
-                self.log(f"dry {name}: complete todo {tid} and read it back")
-                return False
-            self.bc("todos", "complete", str(tid), project=bucket)
-            self.verify_completed(name, tid, bucket)
-            self.log(f"{name}: completed and verified")
-        if key is not None and not self.dry:
-            self.record_completed(key, "complete")
-        return True
-
     def todo_subtask(self, ref, number):
         """Complete subtask `number` (from 1) of a tracked to-do, answered, as Basecamp's native subtask (a decision step
         `decide` added included), read first and back after: one Basecamp already shows completed gets no write, and
         one recorded done that Basecamp shows open is completed again. A decision to-do is completed once Basecamp shows
         every subtask completed, never a request or a to-do or card the decision was only put on (that record just stops
-        being tracked); run again on the last subtask, it completes a to-do still open (todo_complete). True once
-        Basecamp shows the subtask (and, when it was the last, the to-do) completed."""
+        being tracked); run again on the last subtask, it completes a to-do still open (todo_complete). A subtask the
+        owner added to the agent's own to-do in Basecamp, open, keeps the to-do open. True once Basecamp shows the
+        subtask (and, when it was the last open one, the to-do) completed."""
         self.need_todos()
         key, rec = self.tracked(ref, open_first=True)
         name = f"todo subtask {key} {number}"
@@ -3095,9 +3061,16 @@ class Tools:
             self.log(f"{name}: done, {sum(not s['done'] for s in subtasks)} left on todo {rec['todo']}")
             self.ledger("answered", key=key, via="todo subtask")
         siblings = [s for s in subtasks if s is not q]
-        live = self.live_subtasks(rec["todo"], bucket) if siblings and not rec.get("request") else {}
-        if not rec.get("request") and all(s["done"] and live[str(s["id"])].get("completed")
-                                          for s in siblings if str(s["id"]) in live):
+        mine = not rec.get("request")
+        live = self.live_subtasks(rec["todo"], bucket) if mine and (siblings or not rec.get("on")) else {}
+        # On the agent's own to-do, a subtask the owner added in Basecamp holds it open too (on someone else's to-do or
+        # card, `on`, only the decision's own steps count).
+        extra = [] if rec.get("on") else [v for k, v in live.items()
+                                          if k not in {str(s["id"]) for s in subtasks} and not v.get("completed")]
+        if extra:
+            self.log(f"{name}: Basecamp shows subtask " + ", ".join(str(v.get("id")) for v in extra)
+                     + f" open on todo {rec['todo']}, so the to-do stays open")
+        elif mine and all(s["done"] and live[str(s["id"])].get("completed") for s in siblings if str(s["id"]) in live):
             return self.todo_complete(key)
         if not was:
             self.acknowledge_decided(key)
@@ -3459,12 +3432,10 @@ def outcome_applies(ev, item):
 
 
 def keep_answer(rec, rid, answer):
-    """Keep `answer`, the id of the boost that answered `rid`, in reply state `rec` ("answers"), so a retried reply
-    never removes it; a comment or line answer keeps nothing, and drops the boost an earlier reply kept."""
-    if answer is not None:
-        rec.setdefault("answers", {})[str(rid)] = answer
-    else:
-        (rec.get("answers") or {}).pop(str(rid), None)
+    """Keep how `rid` was answered in reply state `rec` ("answers"): the id of the boost that answered it, so a retried
+    reply never removes it, or None for a comment or line answer (replacing the boost an earlier reply kept), so a
+    retried reply knows every read boost left on `rid` is one to take off."""
+    rec.setdefault("answers", {})[str(rid)] = answer
 
 
 def item_recording(rec):

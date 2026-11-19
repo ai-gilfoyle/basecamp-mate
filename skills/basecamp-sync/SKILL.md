@@ -7,7 +7,7 @@ description: Operating contract for a firstmate or second mate whose home mirror
 
 The sync has two layers. Tools are single-purpose: readers that the timer (every 30
 seconds) runs to append pending records, and commands you run to post (`reply`, `ask`, `answer`,
-`todo create|track|comment|complete|subtask`, `complete`, `post-message`) or to dismiss what was not for you (`dismiss`). Behaviors are the workflows the
+`todo create|track|comment|complete|subtask`, `post-message`) or to dismiss what was not for you (`dismiss`). Behaviors are the workflows the
 config turns on, each composed from tools: the card mirror (`tables`, `repos`; off with
 `"cards": false` or without `tables`), the chat inbox (`chats`), chat asks (`ask_chat`),
 check-in answering (`checkins`), release announcements (`releases`), decision to-dos
@@ -144,18 +144,21 @@ each as it is answered with `sync.py todo subtask --todo <key> --number <n>`, an
 completes once all are done. Their comment comes back as a `todo-comment` record, and their
 boost on the to-do or on any comment under it (yours included) as a `boost` record. A decision: act
 on it (relaying first if this is not the main firstmate's home), then
-`sync.py todo complete --todo <key>`. A decision to-do you created in a to-do list the config's
-`decision_lists` names, tracked in `todos.json` or not, is completed with
-`sync.py complete --todo <bucket>/<to-do id>`, which completes the to-do and reads it back;
-it refuses a to-do while Basecamp lists one of its subtasks open, even when the to-do is already completed, and
-names that subtask by its title and Basecamp id, so finish it first. Never complete one with the `basecamp` CLI. These commands do not retry a failed completion:
-you run the command again until it exits 0. Complete a decision to-do once you have acted on the answer, not
-when it arrives. Both commands exit 1 with a FAILED line while Basecamp still shows the to-do
-open (for a decision `decide` put on a to-do or card, `todo complete` completes and reads back only its
-decision steps, and that to-do or card stays open): it is not done, so never report it done. Feedback that is not a decision: act on it and
-answer with `sync.py reply --recording <comment id>`; the to-do stays open. Complete a
-to-do settled another way (the captain merged the PR themselves). Adopt one made by hand with
-`sync.py todo track --key <key> --todo <id>`.
+`sync.py todo complete --todo <key>`, which completes the to-do and reads it back. A decision
+to-do made outside `todo create` (by hand, or in another project) is adopted first with
+`sync.py todo track --key <key> --todo <id> --project <bucket>`, then completed with
+`sync.py todo complete --todo <key>`. Never complete one with the `basecamp` CLI.
+`todo complete` refuses your own to-do while Basecamp lists one of its subtasks open (one
+the captain added included) and names that subtask by its title and Basecamp id: finish it
+with `todo subtask` when it is yours, else ask the captain. These commands do not retry a
+failed completion: fix the cause and run the command again until it exits 0. Complete a
+decision to-do once you have acted on the answer, not when it arrives. `todo complete` and
+`todo subtask` exit 1 with a FAILED line while Basecamp still shows the to-do open (for a
+decision `decide` put on a to-do or card, `todo complete` completes and reads back only its
+decision steps, and that to-do or card stays open): it is not done, so never report it done.
+Feedback that is not a decision: act on it and answer with
+`sync.py reply --recording <comment id>`; the to-do stays open. Complete a to-do settled
+another way (the captain merged the PR themselves).
 
 ## To-do requests
 
@@ -405,7 +408,7 @@ that read.
   config's `agent`): the sync did nothing and changed no state. Never edit `agent` to match;
   relay it so the captain signs the login in again as the agent (`FAILED login check`: who it
   signs in as could not be read, or the config has no `agent`; relay it the same way). While
-  it lasts, `reply`, `todo`, `complete`, `decide`, `ask`, `answer`, `post-message`, `dismiss`,
+  it lasts, `reply`, `todo`, `decide`, `ask`, `answer`, `post-message`, `dismiss`,
   `schedule set` and `unmonitored handle` refuse too (exit 1, the same line), so nothing is
   posted under someone else's name; wait for the sign-in rather than retrying. The line is
   logged once per cause and then hourly, and `login: the sign-in is the agent again` marks
@@ -420,7 +423,7 @@ The main firstmate's own home answers its questions itself rather than relaying.
   (`BASECAMP_PROFILE=<profile> basecamp-axi ...`), as the home's defaults say; the sync
   itself never uses it.
 - Post, comment, complete, delete, archive or trash anything in Basecamp outside `sync.py`
-  and its commands (`reply`, `ask`, `answer`, `todo create|track|comment|complete|subtask`, `complete`, `decide`,
+  and its commands (`reply`, `ask`, `answer`, `todo create|track|comment|complete|subtask`, `decide`,
   `post-message`), or hand-edit `todos.json`, `pings.json`, `notifications.json`, `threads.json`, `timer.json`, `assigned-todos.json`, `participants.json`, `companies.json`, `blocked.json` or `unmonitored.json`.
   The sync's automatic posts are a release announcement (releases only: GitHub releases
   of the repos in `releases`, never merges or PRs, Message Board only), the opt-in session

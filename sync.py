@@ -46,7 +46,7 @@ Deterministic, no model calls. Safety bounds, enforced here:
   - only the explicit commands post, run by the agent, and each refuses to when no
     profile is set or the profile signs in as the owner;
   - a timer run, `backup`, `timesheet post`, `watch` and every command that posts (`reply`,
-    `dismiss`, `complete`, `todo` but `show`, `decide`, `ask`, `answer`, `post-message`, `schedule set`,
+    `dismiss`, `todo` but `show`, `decide`, `ask`, `answer`, `post-message`, `schedule set`,
     `unmonitored handle`) do nothing unless the login signs in as the agent ("agent" in the
     config, set by init --agent): they read only /my/profile.json, before and again inside
     the state lock (a timer run once more just before it writes its run claim) and write no
@@ -62,7 +62,6 @@ the same project (or Pings, account-wide to-do requests or account-wide mentions
 Usage: sync.py --home <home> --config <config.json> [--all] [--dry-run] [--include-prereleases] [--allow-duplicate]
        sync.py status      (the runs recorded on this computer; also bin/basecamp-mate status)
        sync.py reply --home <home> --config <config.json> --recording <comment, chat line or Ping line id> (--body-file <file> | --boost <text>) [--again] [--awaiting] [--dry-run]
-       sync.py complete --home <home> --config <config.json> --todo <bucket>/<to-do id> [--dry-run]
        sync.py dismiss --home <home> --config <config.json> --recording <id> [--reason <text>] [--dry-run]
        sync.py stats --home <home> --config <config.json> [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--by day|week|month|all] [--transcripts <dir>]... [--no-tokens] [--json]
        sync.py watch --home <home> --config <config.json> --chat <chat URL> [--after-line <line id>] [--until YYYY-MM-DD] [--dry-run]
@@ -482,16 +481,6 @@ def cli(argv=None, runner=subprocess.run):
         return command(a, f"reply {a.recording}", lambda s: s.reply(
             a.recording, None if a.boost is not None else read(a.body_file), again=a.again, boost=a.boost,
             awaiting=a.awaiting), runner, guard=True)
-    if argv[:1] == ["complete"]:
-        ap = common("sync.py complete", "Complete a decision to-do the agent's login created, in a to-do list the "
-                                        'config\'s "decision_lists" names, in any project, and verify it: complete it, '
-                                        "then read it back; exits 1 with a FAILED line unless Basecamp shows it "
-                                        "completed (run it again then).")
-        ap.add_argument("--todo", required=True, help="<bucket>/<to-do id>")
-        ap.add_argument("--dry-run", action="store_true")
-        a = ap.parse_args(argv[1:])
-        return command(a, f"complete {a.todo}", lambda s: completed(s, f"complete {a.todo}", s.complete(a.todo)),
-                       runner, guard=True)
     if argv[:1] == ["dismiss"]:
         ap = common("sync.py dismiss", "Say a relayed item was not for the agent: take the read boost (👀) off it and "
                                        "record it dismissed in the relay ledger (relay.jsonl).")

@@ -1,7 +1,7 @@
 # Safety bounds
 
 - A timer run, `backup`, `timesheet post`, `watch` or any command that posts (`reply`,
-  `dismiss`, `complete`, `todo` but `show`, `decide`, `ask`, `answer`, `post-message`, `schedule set`,
+  `dismiss`, `todo` but `show`, `decide`, `ask`, `answer`, `post-message`, `schedule set`,
   `unmonitored handle`) whose login signs in as anyone but the agent (`agent` in the
   config), or whose config has no `agent`, does nothing: it reads only `/my/profile.json`,
   writes no state and logs a FAILED line, once per cause and then at most hourly. The
@@ -22,25 +22,29 @@
   HTTP error, a usage error, empty or unreadable output, any other `ok` value, or a
   non-zero exit) raises with the call, its endpoint, the CLI's error code and its exit
   status; a command then exits 1 with
-  a FAILED line in `sync.log`. `todo complete` and `complete` read the to-do (card, step)
-  back and fail while Basecamp still shows it open, recording nothing; for a decision
-  `decide` put on a to-do or card, `todo complete` reads back only its decision steps,
-  and that to-do or card stays open. `todo subtask` reads
+  a FAILED line in `sync.log`. `todo complete` reads the to-do (card, step)
+  back and fails while Basecamp still shows it open, recording nothing; for a decision
+  `decide` put on a to-do or card, it reads back only its decision steps,
+  and that to-do or card stays open. It refuses the agent's own to-do (not a request)
+  while Basecamp lists one of its subtasks open, one the owner added included, and names
+  that subtask. `todo subtask` reads
   back the subtask it completes, and the to-do too when that subtask was the last open one,
   so its exit 0 says the subtask is completed, and the to-do only when it was due to
-  complete. All three also exit 1 when they completed nothing (a refused login, a closed
+  complete. Both also exit 1 when they completed nothing (a refused login, a closed
   request, a request no longer active and assigned to the agent, a request whose due date
   or rule in Basecamp the sync has not read yet, such as its next occurrence, a decision
-  with no step of its own), except in a dry run. These commands do not retry a failed completion: the
-  agent runs the command again. `reply` fails when Basecamp answers its post or boost
+  with no step of its own), except in a dry run. These commands do not retry a failed
+  completion: the agent fixes the cause and runs the command again. `reply` fails when
+  Basecamp answers its post or boost
   without an id, or gives no answer at all; the post may exist then, so check Basecamp
   before running it again. `reply` and `dismiss` read the boosts back after taking the
   read boost off and fail while one is still there. A `reply` run again, without
-  `--again`, on what it already answered posts nothing and removes nothing: it only reads
-  the boosts back and fails while the acting user's read boost is still there beside the
-  boost that answered (kept in `answers`). When the reply's state keeps no answer (a
-  comment or line, or a reply from before `answers`), a read boost left there is only
-  reported, since it may be the answer itself.
+  `--again`, on what it already answered posts nothing: it reads the boosts back and takes
+  off again any read boost of the acting user still there (never the boost that
+  answered), reading back once more, since its state (`answers`) says how the item was
+  answered: by a boost, kept, or by a comment or line. When the reply's state keeps no
+  answer (a reply from before `answers`), a read boost left there is only reported, since
+  it may be the answer itself.
 - Cards are never deleted, trashed or archived. Cards whose task left the backlog are
   left as they are (the run logs how many).
 - The sync never posts as a comment, and never to chat, except the opt-in session alert
@@ -204,17 +208,11 @@
   completes it, after which its comments are no longer read. `sync.py todo show --todo <key
   or id>` prints it as Basecamp has it now (open, assigned to the acting login, due date,
   repetition rule), reading only. `sync.py todo track --key
-  <key> --todo <id>` adopts a to-do made some other way: its existing comments are skipped
-  and only later ones are recorded. Only tracked to-dos can be commented on with `todo`
-  commands, and completed with `todo complete`. `sync.py complete --todo <bucket>/<to-do
-  id>` also completes a to-do the agent's login created in a to-do list the config's
-  `decision_lists` names (in any project), and refuses any other to-do before it writes.
-  A to-do `todos.json` tracks passes the same creator and list checks (for example a
-  decision to-do `decide` added a step to); `complete` refuses any to-do while Basecamp
-  lists one of its subtasks open (read live, not from `todos.json`), and records its open
-  entry completed in `todos.json` once Basecamp shows the to-do completed. A tracked to-do
-  outside these lists keeps `todo complete`. To-dos are never deleted, trashed or archived. All of these post nothing with no profile or a profile
-  signed in as the owner, and `--dry-run` only logs.
+  <key> --todo <id> [--project <id>]` adopts a to-do made some other way, in any project:
+  its existing comments are skipped and only later ones are recorded, and `todo complete`
+  then completes it like one `todo create` made. Only tracked to-dos can be commented on
+  or completed; to-dos are never deleted, trashed or archived. All of these post nothing
+  with no profile or a profile signed in as the owner, and `--dry-run` only logs.
 - Reports: with `message_board` set,
   `sync.py post-message --home <home> --config <config.json> --subject <text> --body-file <file>`
   posts one message on that board (Markdown body, rendered by the CLI) as the acting user,
