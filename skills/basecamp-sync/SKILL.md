@@ -147,7 +147,7 @@ on it (relaying first if this is not the main firstmate's home), then
 `sync.py todo complete --todo <key>`. A decision to-do you created in a to-do list the config's
 `decision_lists` names, tracked in `todos.json` or not, is completed with
 `sync.py complete --todo <bucket>/<to-do id>`, which completes the to-do and reads it back;
-it refuses a to-do while Basecamp lists one of its subtasks open, even one already completed, and
+it refuses a to-do while Basecamp lists one of its subtasks open, even when the to-do is already completed, and
 names that subtask by its title and Basecamp id, so finish it first. Never complete one with the `basecamp` CLI. These commands do not retry a failed completion:
 you run the command again until it exits 0. Complete a decision to-do once you have acted on the answer, not
 when it arrives. Both commands exit 1 with a FAILED line while Basecamp still shows the to-do
