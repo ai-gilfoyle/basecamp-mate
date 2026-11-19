@@ -147,7 +147,10 @@ on it (relaying first if this is not the main firstmate's home), then
 `sync.py todo complete --todo <key>`, which completes the to-do and reads it back. A decision
 to-do made outside `todo create` (by hand, or in another project) is adopted first with
 `sync.py todo track --key <key> --todo <id> --project <bucket>`, then completed with
-`sync.py todo complete --todo <key>`. Never complete one with the `basecamp` CLI.
+`sync.py todo complete --todo <id>`. When `decide` already put a step on it, `todo track`
+makes that record (under the key `decide` gave it) your own decision to-do, but only when
+your login created the to-do; on anyone else's, only the steps are ever completed. Never
+complete one with the `basecamp` CLI.
 `todo complete` refuses your own to-do while Basecamp lists one of its subtasks open (one
 the captain added included) and names that subtask by its title and Basecamp id: finish it
 with `todo subtask` when it is yours, else ask the captain. These commands do not retry a

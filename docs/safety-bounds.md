@@ -210,7 +210,10 @@
   repetition rule), reading only. `sync.py todo track --key
   <key> --todo <id> [--project <id>]` adopts a to-do made some other way, in any project:
   its existing comments are skipped and only later ones are recorded, and `todo complete`
-  then completes it like one `todo create` made. Only tracked to-dos can be commented on
+  then completes it like one `todo create` made. On a to-do `decide` already tracks (its
+  steps only), `todo track` makes that record the agent's own decision to-do, under its
+  key, only when Basecamp shows the agent's login created the to-do; on anyone else's it
+  changes nothing. Only tracked to-dos can be commented on
   or completed; to-dos are never deleted, trashed or archived. All of these post nothing
   with no profile or a profile signed in as the owner, and `--dry-run` only logs.
 - Reports: with `message_board` set,

@@ -2889,14 +2889,23 @@ class Tools:
 
     def todo_track(self, key, tid, project=None):
         """Track an existing to-do (in `project`, default the configured one) under `key`; its comments and boosts so far
-        are not relayed. Writes nothing to Basecamp."""
+        are not relayed. Writes nothing to Basecamp.
+
+        A to-do `decide` already tracks as someone else's ("on": its own decision steps only) that the agent's login
+        created is adopted in place instead: that record, under its own key, becomes the agent's decision to-do, so
+        `todo complete` completes the to-do itself once its steps are done. One someone else created stays as it is."""
         self.need_todos(requests=False)
+        bucket = str(project or self.project)
         with self.locked("todos.json"):
             state = self.load("todos.json", {})
-            if key in state or any(r["todo"] == tid for r in state.values()):
+            on = next((k for k, r in state.items() if str(r["todo"]) == str(tid) and r.get("on") and not r.get("type")
+                       and str(r.get("bucket") or self.project) == bucket
+                       and not r.get("completed") and not r.get("closed")), None)
+            if on is None and (key in state or any(r["todo"] == tid for r in state.values())):
                 self.log(f"todo track {key}: key or todo {tid} already tracked")
                 return False
-        bucket = str(project or self.project)
+        if on is not None:
+            return self.adopt_decided(key, on, tid, bucket)
         todo = self.bc("api", "get", f"/buckets/{bucket}/todos/{tid}.json", project=bucket) or {}
         comments = self.comments(tid, project=bucket)
         cursor = max([c.get("id", 0) for c in comments], default=0)
@@ -2912,6 +2921,27 @@ class Tools:
                 state[key]["completed"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             self.save_json("todos.json", state)
         self.log(f"todo track {key}: todo {tid}, cursor {cursor}")
+        return True
+
+    def adopt_decided(self, key, on, tid, bucket):
+        """`todo track` of to-do `tid`, which record `on` already tracks as a decision put on someone else's to-do: when
+        Basecamp shows the agent's login created it, that record (key `on`, kept, so earlier notes still name it) becomes
+        the agent's own decision to-do; else it is left as it is. True when adopted."""
+        name = f"todo track {key}"
+        creator = (self.todo(tid, bucket).get("creator") or {}).get("id")
+        if self.agent_id is None or creator != self.agent_id:
+            self.log(f"{name}: todo {tid} is tracked as {on}, a decision on a to-do {creator} created, not the agent's "
+                     "login, so it stays that: `todo complete` completes only its decision steps")
+            return False
+        if self.dry:
+            self.log(f"dry {name}: adopt todo {tid}, tracked as {on}, as the agent's own decision to-do")
+            return False
+        with self.locked("todos.json"):
+            state = self.load("todos.json", {})
+            state[on].pop("on", None)
+            self.save_json("todos.json", state)
+        self.log(f"{name}: todo {tid} was tracked as {on} (decide); now the agent's own decision to-do under {on}: "
+                 f"complete it with `todo complete --todo {tid}`")
         return True
 
     def tracked(self, ref, open_first=False):

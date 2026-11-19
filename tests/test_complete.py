@@ -125,6 +125,39 @@ class TrackedElsewhere(Base):
         self.assertEqual(self.cli("todo", "complete", "--todo", "merge")[0], 0, self.log())
         self.assertTrue(self.stub.todo_records[str(TODO)]["completed"])
 
+    def decided(self):
+        """`decide` put a step on the to-do before it was tracked: todos.json tracks it as "on", its steps only."""
+        self.side("todos.json", {"decision-merge": {"todo": TODO, "bucket": BUCKET, "on": True, "cursor": 0,
+                                                    "subtasks": [{"text": "Merge?", "done": None, "id": 7,
+                                                                  "decider": CAPTAIN}]}})
+        self.stub.subtask_lists[str(TODO)] = [{"id": 7, "title": "Merge?"}]
+
+    def test_a_todo_decide_tracks_that_the_agent_created_is_adopted_and_completed_with_its_step(self):
+        self.decided()
+        code, _ = self.cli("todo", "track", "--key", "merge", "--todo", str(TODO), "--project", str(BUCKET))
+        self.assertEqual(code, 0, self.log())
+        state = self.state("todos.json")
+        self.assertNotIn("on", state["decision-merge"])
+        self.assertNotIn("merge", state)  # the record keeps its key, so earlier notes still name it
+        self.assertEqual(self.cli("todo", "complete", "--todo", str(TODO))[0], 1)  # its step is still open
+        self.assertIn("Basecamp shows its subtask 7 ('Merge?') open", self.log())
+        self.assertEqual(self.made("todos complete"), [])
+        self.assertEqual(self.cli("todo", "subtask", "--todo", str(TODO), "--number", "1")[0], 0, self.log())
+        self.assertEqual(self.made("todos complete"), [["todos", "complete", str(TODO)]])
+        self.assertTrue(self.stub.todo_records[str(TODO)]["completed"])
+        self.assertIn("completed", self.state("todos.json")["decision-merge"])
+
+    def test_a_todo_decide_tracks_that_someone_else_created_stays_open(self):
+        self.stub.todo_records[str(TODO)]["creator"] = {"id": CAPTAIN}
+        self.decided()
+        self.assertEqual(self.cli("todo", "track", "--key", "merge", "--todo", str(TODO), "--project", str(BUCKET))[0], 0)
+        self.assertIn(f"a decision on a to-do {CAPTAIN} created, not the agent's login", self.log())
+        self.assertTrue(self.state("todos.json")["decision-merge"]["on"])
+        self.assertEqual(self.cli("todo", "complete", "--todo", str(TODO))[0], 0, self.log())
+        self.assertEqual(self.made("subtasks complete"), [["subtasks", "complete", "7"]])
+        self.assertEqual(self.made("todos complete"), [])  # only its step: the to-do is not the agent's
+        self.assertFalse(self.stub.todo_records[str(TODO)]["completed"])
+
     def test_refused_signed_in_as_anyone_but_the_agent(self):
         self.track()
         self.stub.me = CAPTAIN

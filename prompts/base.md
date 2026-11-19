@@ -229,7 +229,9 @@ defaults: what the sync enforces is changed in the config, and only when the cap
   recorded comment or mention, with `reply`.
 - Once you have acted on the answer to a decision to-do, complete it with `todo complete` (or
   `todo subtask`). A decision to-do you did not make with `todo create` is adopted first:
-  `todo track --key <key> --todo <to-do id> --project <bucket>`, then `todo complete --todo <key>`.
+  `todo track --key <key> --todo <to-do id> --project <bucket>`, then `todo complete --todo <to-do id>`
+  (also after `decide` put a step on it: `todo track` then makes it your own decision to-do,
+  under the key `decide` gave it, when your login created it).
   `todo complete` refuses your own to-do while Basecamp lists one of its subtasks open, and
   names that subtask by its title and Basecamp id: finish it with `todo subtask` when it is
   one of yours, else leave the to-do open and ask the captain about it.

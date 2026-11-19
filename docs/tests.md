@@ -91,7 +91,9 @@ outside `todo create` in another project, adopted with `todo track --project` an
 with `todo complete` (completion in its own project, read back), a completion the read-back
 shows open failing non-zero, not retried by the timer, and completed when run again, a to-do
 already completed getting no write, refused while Basecamp lists one of its subtasks open
-(named by title and id) and completed once it is done, the wrong login refused, a dry run,
+(named by title and id) and completed once it is done, one `decide` already tracks adopted
+in place when the agent created it (completed with its last step) and left to its steps
+when someone else did, the wrong login refused, a dry run,
 and no `sync.py complete` command; `todo complete` recording nothing while the
 read-back shows the to-do open, completing again one recorded completed that Basecamp shows
 open, reading a request once before it writes, an id naming the open entry over an older

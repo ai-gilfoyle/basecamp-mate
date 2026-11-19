@@ -261,8 +261,9 @@ Then wait for their comment or boost; do not ask the same thing in chat as well.
   decision; treat it as feedback below. Carry it out, then `python3 SYNC/sync.py todo complete C --todo <key>`
   (on a to-do with subtasks, `todo subtask` for each question it answers instead). A decision
   to-do you made some other way than `todo create`: adopt it first with
-  `python3 SYNC/sync.py todo track C --key <key> --todo <id> --project <bucket>`, then
-  complete it the same way. Complete it once you have acted, not when the answer arrives.
+  `python3 SYNC/sync.py todo track C --key <key> --todo <id> --project <bucket>` (also
+  after `decide` put a step on it), then complete it the same way, with `--todo <id>`.
+  Complete it once you have acted, not when the answer arrives.
   `todo complete` reads the to-do back and exits 1 while it is still open (for a `decide`
   step, it reads back only the steps), and refuses while Basecamp lists one of its subtasks
   open, naming it by its title and Basecamp id; `todo subtask` reads back its subtask, and
