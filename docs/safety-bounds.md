@@ -19,8 +19,9 @@
   acknowledgements and marking handled notifications read; never another home's. The
   agent's `reply` and `dismiss` take its own read boost off again.
 - No write fails silently. Every basecamp CLI call that is not answered `"ok": true` (an
-  HTTP error, a usage error, empty or unreadable output, any other `ok` value, or a non-zero exit) raises with the
-  call, its endpoint, the CLI's error code and its exit status; a command then exits 1 with
+  HTTP error, a usage error, empty or unreadable output, any other `ok` value, or a
+  non-zero exit) raises with the call, its endpoint, the CLI's error code and its exit
+  status; a command then exits 1 with
   a FAILED line in `sync.log`. `todo complete` and `complete` read the to-do (card, step)
   back and fail while Basecamp still shows it open, recording nothing. `todo subtask` reads
   back the subtask it completes, and the to-do too when that subtask was the last open one,
