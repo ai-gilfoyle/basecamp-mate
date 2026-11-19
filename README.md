@@ -14,7 +14,12 @@ which runs a crew of other agents on your Linux computer.
 - **Decisions arrive as to-dos you answer from your phone.** When the agent needs you (a
   choice between options, an approval, a login only you can give) it assigns you a to-do
   with the context, the options and what it recommends. Your comment or boost on that
-  to-do is your answer, and it reaches the agent in about half a minute.
+  to-do is your answer, and it reaches the agent in about half a minute. If you answer
+  decisions in mate instead, add `"decision_autocomplete": {"source": "<mate base URL>"}`
+  to the config: a to-do whose description links to its decision in mate
+  (`…/#/decision/<home>/<task>`) then gets an "Answered in mate" comment and completes
+  itself once mate no longer lists that decision as open. It is off by default
+  ([Config](docs/config.md)).
 - **Chat with your agent.** Ask it something in the project's chat and it answers there.
   Turn on Pings and to-do requests, and you can also message it directly or assign it a
   to-do: it takes the work on, comments as it goes and completes the to-do when it is done.

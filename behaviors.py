@@ -21,6 +21,7 @@ from tools import AUTHORITY, THREADS, history, item_recording, now_iso, parse_re
 
 COLUMNS = ("Triage", "Not now", "Figuring it out", "In progress", "Ready for QA", "Done")
 SLOW, SWEEP, DAY = 300, 3600, 86400  # seconds: the card mirror's, releases' and check-ins' cadence; the hourly repair sweep's; the backup's
+CREATED_HERE = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ")  # todos.json "created" as todo create stamps it
 
 
 class Behavior:
@@ -515,6 +516,90 @@ class DecisionTodos(Behavior):
 
     def run(self, items=None):
         self.t.read_todo_comments(requests=False)
+
+
+class DecisionAutocomplete(Behavior):
+    """Complete a decision to-do once its decision is no longer open in the decisions app (mate): answered there, or
+    settled some other way.
+
+    "decision_autocomplete": {"source": "<mate base URL>"} turns it on (it needs "todos"). Every 5 minutes it takes the
+    open to-dos (and cards) this home created and tracks in todos.json, never a request or a to-do a decision was only
+    put on, and finds the one decision link (`.../#/decision/<home>/<task>`) in each one's body (read once, then kept).
+    It then reads `GET <source>/api/decisions` once. A linked decision whose home mate read fine and whose card is no
+    longer listed is closed: the to-do gets one comment, "Answered in mate" with the answer mate recorded when there is
+    one, and is completed. A to-do with no link, a decision still listed, or one in a home mate could not read is left
+    alone; when the source cannot be read nothing is done that run, logged once until that changes.
+    """
+    name, keys, every = "decision-autocomplete", ("decision_autocomplete",), SLOW
+    STATE = "decision-autocomplete.json"  # the last problem logged, so a lasting one is logged once
+    ANSWERED = ("answered", "already-answered")  # mate's history states that carry the owner's answer
+
+    def __init__(self, t, cfg):
+        super().__init__(t, cfg)
+        opts = cfg.get("decision_autocomplete")
+        if opts is None or opts is False:
+            return
+        if (not isinstance(opts, dict) or set(opts) - {"source"} or not isinstance(opts.get("source"), str)
+                or not re.match(r"https?://[^\s/]+", opts["source"])):
+            raise ValueError('config "decision_autocomplete" must be {"source": "<the decisions app\'s base URL, '
+                             'http(s)://...>"}')
+        if cfg.get("todos") is None:
+            raise ValueError('config "decision_autocomplete" needs "todos": it completes the decision to-dos they track')
+        self.on, self.source = True, opts["source"]
+
+    @staticmethod
+    def candidate(rec):
+        """A decision to-do (or card) `todo create` made and that is still open here, with no subtask left unanswered:
+        never a request, a to-do the agent only put a decision on, or one adopted with `todo track` ("adopted"; one
+        adopted before that marker keeps Basecamp's own created_at, never todo create's whole-second UTC stamp)."""
+        return not (rec.get("completed") or rec.get("closed") or rec.get("request") or rec.get("on") or rec.get("adopted")
+                    or rec.get("decision_settled") or rec.get("type") not in (None, "card")
+                    or not CREATED_HERE.fullmatch(str(rec.get("created") or ""))
+                    or any(not q.get("done") for q in rec.get("subtasks") or []))
+
+    def note(self, problem):
+        """Log `problem` once while it lasts, and when it clears (a dry run only prints)."""
+        t = self.t
+        last = t.load(self.STATE, {}).get("problem")
+        if problem == last:
+            return
+        msg = f"decision autocomplete: {problem}" if problem else "decision autocomplete: the decisions source reads again"
+        if t.dry:
+            print(msg)
+            return
+        if problem or last:
+            t.log(msg)
+        t.save_json(self.STATE, {"problem": problem} if problem else {})
+
+    def run(self, items=None):
+        t = self.t
+        linked = {}
+        for key, rec in sorted(t.load("todos.json", {}).items()):
+            if self.candidate(rec):
+                link = t.decision_link(key)
+                if link:
+                    linked[key] = link
+        if not linked:
+            return
+        try:
+            data = t.read_decisions(self.source)
+        except RuntimeError as e:
+            self.note(f"cannot read the decisions source, nothing completed: {e}")
+            return
+        homes = {h.get("id"): h for h in data["homes"] if isinstance(h, dict)}
+        listed = {(c.get("home"), c.get("task")) for c in data["cards"] if isinstance(c, dict)}
+        unread = sorted({home for home, _ in linked.values() if (homes.get(home) or {}).get("ok") is not True})
+        self.note(f"mate did not read home {', '.join(unread)}; its decision to-dos are left open" if unread else None)
+        for key, (home, task) in sorted(linked.items()):
+            if (home, task) in listed or home in unread:
+                continue
+            answers = sorted((h for h in data["history"] if isinstance(h, dict) and h.get("home") == home
+                              and h.get("task") == task and h.get("state") in self.ANSWERED and h.get("answer")),
+                             key=lambda h: str(h.get("at") or ""))
+            try:
+                t.close_decided_todo(key, answers[-1]["answer"] if answers else None)
+            except RuntimeError as e:
+                t.log(f"decision close {key}: {e}")
 
 
 class AssignedTodos(Behavior):
@@ -1639,7 +1724,7 @@ def stamp(r):
 # owner's input is not held up by the card mirror; inbox delivery after every reader and the timesheet (whose reports
 # it delivers the same run), then the session alert, which watches what it delivered.
 ALL = (BlockedReplies, Notifications, CardMirror, ChatInbox, ChatWatch, ChatAsks, ReleaseAnnouncements, SecurityAdvisories, CheckinAnswering, DecisionTodos,
-       AssignedTodos, AssignedCards, AssignedSteps, Reports, Pings, Timesheet, InboxDelivery, SessionAlert, Backup)
+       DecisionAutocomplete, AssignedTodos, AssignedCards, AssignedSteps, Reports, Pings, Timesheet, InboxDelivery, SessionAlert, Backup)
 # The readers notifications take over: with notifications on they run as the hourly repair sweep.
 # assigned-todos keeps its 5-minute sweep: a request's edits and the owner's boosts on it reach no notification.
 SWEPT = ("chat-inbox", "chat-watch", "decision-todos", "reports", "pings")

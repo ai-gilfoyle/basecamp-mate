@@ -22,7 +22,9 @@
   left as they are (the run logs how many).
 - The sync never posts as a comment, and never to chat, except the opt-in session alert
   (one line per outage, below) and, with `blocked` on, the short reply to a blocked sender
-  where they addressed the agent (see [Blocked senders](people.md#blocked-senders)). Its other automatic post is a
+  where they addressed the agent (see [Blocked senders](people.md#blocked-senders)), and, with
+  `decision_autocomplete` on, one "Answered in mate" comment on a decision to-do it then
+  completes (below). Its other automatic post is a
   release announcement, and only on the Message Board (below). Otherwise the only thing that
   posts is the explicit `sync.py reply` command below, run by the relaying agent to
   answer a captain question where it was asked: a comment on the card, or a line in the chat.
@@ -185,6 +187,24 @@
   and only later ones are recorded. Only tracked to-dos can be commented on or completed;
   to-dos are never deleted, trashed or archived. All of these post nothing with no
   profile or a profile signed in as the owner, and `--dry-run` only logs.
+- Decision autocomplete: with `"decision_autocomplete": {"source": "<mate base URL>"}`
+  (and `todos`) set, every 5 minutes the run looks at each open to-do (or card) that
+  `todo create` made and `todos.json` tracks, never a request, a to-do `decide` only put
+  a decision on, or one adopted with `todo track` (marked `adopted`; one adopted earlier
+  keeps Basecamp's own `created_at`, which `todo create`'s whole-second UTC stamp never
+  matches), and never while one of its subtasks is unanswered. It reads each one's body from Basecamp once and keeps its one decision
+  link, `…/#/decision/<home>/<task>`, as `decision` in `todos.json`; a to-do with no link
+  (or links to two decisions) is never touched. When any to-do has a link, it reads
+  `GET <source>/api/decisions` with `curl`, read-only. A decision whose home mate read
+  (`homes[].ok`) and that is no longer in `cards` is closed: the to-do gets one comment,
+  "Answered in mate: <answer>" (the newest answer in mate's `history` for it; "Answered in
+  mate." when there is none), and is completed as `todo complete` does. A decision still
+  listed, a home mate did not read and a source that cannot be read (curl fails, not JSON,
+  no `homes` and `cards` lists) touch nothing that run; the last of these is logged once
+  until it clears. A to-do that Basecamp already shows completed (or no longer finds) is
+  left as it is and marked `decision_settled`. A completion that fails is retried next
+  run without a second comment (`decision_comment` keeps that it was posted). `--dry-run`
+  reads and only logs.
 - Reports: with `message_board` set,
   `sync.py post-message --home <home> --config <config.json> --subject <text> --body-file <file>`
   posts one message on that board (Markdown body, rendered by the CLI) as the acting user,

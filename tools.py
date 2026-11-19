@@ -62,6 +62,7 @@ TRUNCATED = re.compile(r"Showing (\d+) of (\d+) results")
 
 # Logged once when a request's to-do, card or step refetch answers not_found: final for that record, never retried.
 NOT_FOUND = "not found (deleted, or out of this login's reach)"
+DECISION_LINK = re.compile(r"#/decision/([A-Za-z0-9][A-Za-z0-9._-]*)/([A-Za-z0-9][A-Za-z0-9._-]*)")  # a decision's link in a to-do body
 
 
 class BasecampError(RuntimeError):
@@ -2852,6 +2853,7 @@ class Tools:
             state = self.load("todos.json", {})
             state[key] = {"todo": tid, "title": todo.get("content"), "url": todo.get("app_url"), "cursor": cursor,
                           "created": todo.get("created_at"),  # no boost state: the first read seeds it
+                          "adopted": True,  # not made by todo create: decision_autocomplete never completes it
                           **({"bucket": int(bucket)} if bucket != str(self.project) else {})}
             if todo.get("completed"):
                 state[key]["completed"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -2976,6 +2978,103 @@ class Tools:
                         **todo_schedule(todo), **self.timing(todo), "url": todo.get("app_url"), **step_fields(rec),
                         **({"subtasks": rec["subtasks"]} if rec.get("subtasks") else {})}, indent=1))
         return True
+
+    # --- decision links: a decision to-do whose body links to its decision in a decisions app (mate) ---
+
+    def read_decisions(self, source):
+        """The decisions app's `GET <source>/api/decisions`, read with curl: {"homes": [...], "cards": [...],
+        "history": [...]}. Raises RuntimeError when it cannot be read or is not that shape, so a caller never acts
+        on missing data. Read-only."""
+        url = source.rstrip("/") + "/api/decisions"
+        try:
+            r = self.run(["curl", "-fsS", "--max-time", "20", url], capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.SubprocessError) as e:
+            raise RuntimeError(f"{url}: {type(e).__name__}: {e}")
+        if r.returncode != 0:
+            raise RuntimeError(f"{url}: curl exit {r.returncode}: {(r.stderr or r.stdout or '').strip()[:200]}")
+        try:
+            data = json.loads(r.stdout)
+        except ValueError:
+            raise RuntimeError(f"{url}: not JSON")
+        if not isinstance(data, dict) or not isinstance(data.get("homes"), list) or not isinstance(data.get("cards"), list):
+            raise RuntimeError(f"{url}: no homes and cards lists")
+        if not isinstance(data.get("history"), list):
+            data["history"] = []
+        return data
+
+    def decision_link(self, key):
+        """The (home, task) of the one decision link (`.../#/decision/<home>/<task>`) in tracked to-do `key`'s body, or
+        None when it has none (or links more than one decision). Read from Basecamp once and kept in todos.json as
+        "decision" ([home, task], or null); a to-do (or card) that is not_found keeps null: about that record only."""
+        with self.locked("todos.json"):
+            rec = self.load("todos.json", {}).get(key) or {}
+        if "decision" in rec:
+            return tuple(rec["decision"]) if rec["decision"] else None
+        errors = self.errors
+        try:
+            todo = self.todo(rec["todo"], rec.get("bucket"), rec.get("type") or "todo")
+        except RuntimeError as e:
+            if getattr(e, "code", None) != "not_found":
+                self.log(f"decision link {key}: {e}")
+                return None
+            self.errors = errors
+            self.log(f"decision link {key}: {rec.get('type') or 'todo'} {rec['todo']} {NOT_FOUND}; never closed by its decision")
+            todo = {}
+        found = sorted(set(DECISION_LINK.findall(html.unescape(todo.get("description") or ""))))
+        link = list(found[0]) if len(found) == 1 else None
+        if len(found) > 1:
+            self.log(f"decision link {key}: links {len(found)} decisions, so none closes it")
+        if not self.dry:
+            with self.locked("todos.json"):
+                state = self.load("todos.json", {})
+                if key in state:
+                    state[key]["decision"] = link
+                    self.save_json("todos.json", state)
+        return tuple(link) if link else None
+
+    def close_decided_todo(self, key, answer=None):
+        """Comment "Answered in mate" (with `answer`, the recorded answer, when there is one) on tracked decision to-do
+        `key`, once, and complete it: its decision is no longer open. One that Basecamp already shows completed (or no
+        longer finds) is left as it is and marked "decision_settled", so it is not checked again. Returns True when
+        completed."""
+        key, rec = self.tracked(key)
+        if rec.get("completed") or rec.get("closed") or rec.get("decision_settled"):
+            return False
+        if self.refused(f"decision close {key}", "owner"):
+            return False
+        errors = self.errors
+        try:
+            todo = self.todo(rec["todo"], rec.get("bucket"), rec.get("type") or "todo")
+        except RuntimeError as e:
+            if getattr(e, "code", None) != "not_found":
+                raise
+            self.errors = errors
+            todo, why = None, NOT_FOUND
+        if todo is not None and not todo.get("completed") and todo.get("status") in (None, "active"):
+            why = None
+        elif todo is not None:
+            why = "already completed in Basecamp"
+        if why:
+            self.log(f"decision close {key}: {rec.get('type') or 'todo'} {rec['todo']} {why}; left as it is")
+            if not self.dry:
+                with self.locked("todos.json"):
+                    state = self.load("todos.json", {})
+                    state[key]["decision_settled"] = now_iso()
+                    self.save_json("todos.json", state)
+            return False
+        answer = " ".join(str(answer or "").split())
+        text = f"Answered in mate: {answer[:200]}" if answer else "Answered in mate."
+        if self.dry:
+            self.log(f"dry decision close {key}: comment {text!r} and complete todo {rec['todo']}")
+            return False
+        if not rec.get("decision_comment"):  # once: a completion that fails is retried without a second comment
+            c = self.bc("comments", "create", str(rec["todo"]), "-", input=text, project=rec.get("bucket")) or {}
+            with self.locked("todos.json"):
+                state = self.load("todos.json", {})
+                state[key]["decision_comment"] = c.get("id") or True
+                self.save_json("todos.json", state)
+            self.log(f"decision close {key}: comment {c.get('id')} on todo {rec['todo']}")
+        return self.todo_complete(key)
 
     def post_message(self, subject, body):
         """Post a message (`body` as Markdown, rendered by the CLI) on the configured "message_board"."""

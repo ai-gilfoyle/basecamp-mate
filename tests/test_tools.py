@@ -411,7 +411,7 @@ class Cli(ToolBase):
         self.assertEqual(code, 0)
         on = {ln.split()[0]: ln.split()[1] for ln in out.splitlines()}
         self.assertEqual(on, {"card-mirror": "on", "chat-inbox": "off", "chat-watch": "off", "chat-asks": "off", "release-announcements": "off", "security-advisories": "off",
-                              "checkin-answering": "off", "decision-todos": "on", "assigned-todos": "off", "assigned-cards": "off", "assigned-steps": "off", "reports": "on",
+                              "checkin-answering": "off", "decision-todos": "on", "decision-autocomplete": "off", "assigned-todos": "off", "assigned-cards": "off", "assigned-steps": "off", "reports": "on",
                               "pings": "off", "timesheet": "off", "inbox-delivery": "off", "session-alert": "off", "backup": "off", "notifications": "on",
                               "blocked-replies": "off"})
 

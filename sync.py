@@ -8,7 +8,8 @@ behaviors.py is the behaviors layer: opt-in workflows a home turns on in its con
 and that compose the tools: the card mirror ("tables", "repos"; off with "cards":
 false), the chat inbox ("chats"), chat watches (`sync.py watch`: one chat in any project of
 the account, kept in chats.json), chat asks ("ask_chat"), check-in answering
-("checkins"), release announcements ("releases"), decision to-dos ("todos"),
+("checkins"), release announcements ("releases"), decision to-dos ("todos"; with
+"decision_autocomplete", each one linked to a decision in mate is completed once mate no longer lists it as open),
 reports ("message_board"), Pings ("pings": the owner's direct messages to the agent's
 login), to-do requests ("assigned_todos": to-dos the owner assigns to the agent's login),
 inbox delivery ("inbox"), the session alert ("session_alert"), the state backup ("backup"), timesheets ("timesheet":
@@ -37,7 +38,8 @@ Deterministic, no model calls. Safety bounds, enforced here:
     with "timesheet" on, timesheet entries go only on the to-dos and cards the agent
     names with `sync.py timesheet start` (or tracks under the same key);
   - nothing is ever deleted, trashed or archived, except the acting user's own 👀
-    boost once a question is answered (`reply`) or found not to be for the agent (`dismiss`); the timer run posts no comment, and its only
+    boost once a question is answered (`reply`) or found not to be for the agent (`dismiss`); the timer run posts no comment
+    (except, with "decision_autocomplete", one "Answered in mate" comment on a decision to-do it then completes), and its only
     writes besides the card mirror are 👀/👍 acknowledgement boosts, marking the agent
     login's handled notifications read, a Message Board announcement per new GitHub
     release, and, with "session_alert", one chat line to the owner while the firstmate
