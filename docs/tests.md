@@ -85,6 +85,17 @@ a profile; `tests/test_runs.py` covers the run guard: claiming, refusing and nam
 home's live overlapping run (project, login by person or profile, Pings), logging it once
 then hourly, stale, removed and recycled-pid claims, the override, dry runs, commands,
 `sync.py status`, and `doctor`'s overlap check;
+`tests/test_complete.py` covers writes that cannot fail silently: `sync.py complete` on an
+untracked to-do the agent made in another project (comment, completion, read back), a
+completion the read-back shows open failing non-zero, a retry posting the comment once, a
+to-do already completed getting no write, a to-do neither tracked nor made by the agent
+refused, a URL or a bare id, a tracked to-do recorded completed (also one recorded
+completed that Basecamp shows open), the wrong login refused, a dry run; `todo complete`
+recording nothing while the read-back shows the to-do open; CLI calls raising on an HTTP
+error, a usage error, empty or unreadable output and an ok answer with a non-zero exit,
+each naming the call, code and exit; and `reply` failing on a post without an id and on a
+read boost Basecamp still shows after removing it.
+
 `tests/test_login_guard.py` covers the agent check: a run signed in as someone other than
 the agent reads only `/my/profile.json` and writes no state (an established home and a new
 one), a matching sign-in runs as before, a sign-in that changes while the run waits for the

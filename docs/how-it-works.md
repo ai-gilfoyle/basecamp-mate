@@ -42,7 +42,8 @@ policy. Each does one thing to the configured account and project:
 | `sync.py todo create` | command | creates a to-do assigned to the owner, with a description, and tracks it under a key: in the configured decisions project and list, or any project (`--project`), list (`--list`) or card table column (`--card-table --column`, a card) |
 | `sync.py todo track` | command | tracks an existing to-do (in any project, `--project`) under a key, without relaying its old comments |
 | `sync.py todo comment` | command | comments on a tracked to-do |
-| `sync.py todo complete` | command | completes a tracked to-do (a decision to-do, or a to-do request when the work is done) |
+| `sync.py todo complete` | command | completes a tracked to-do (a decision to-do, or a to-do request when the work is done), then reads it back and fails unless Basecamp shows it completed |
+| `sync.py complete` | command | completes a to-do that is tracked or that the agent's login created, in any project (`--todo <bucket>/<id>`, its URL, or an id in the project), posting `--comment-file` on it first (once, even when retried); it reads the to-do back and exits 1 with a FAILED line unless Basecamp shows it completed |
 | `sync.py todo subtask` | command | completes one native subtask (decision) of a multi-decision to-do, or a decision step; a decision to-do completes once all are done (never a request, or a to-do or card a step was only put on) |
 | `sync.py schedule show\|set` | command | prints, or remembers per to-do list (or by default), when dated and repeating requests are done (`ask`, `due`, `before`); local state only |
 | `sync.py decide` | command | puts a decision on the to-do or card it is about (any project): a comment there and a step (a native subtask) assigned to the decider, the captain or an operator; their comments, boosts and checking the step (`decision-step-done`) come back; the to-do or card itself is never completed |

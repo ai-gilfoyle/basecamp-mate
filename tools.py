@@ -302,16 +302,26 @@ class Tools:
     def bc(self, *args, input=None, project=None, tries=3):
         """Run the basecamp CLI on the configured project, or on `project` (another bucket of the account) when given;
         a retryable failure is tried again, up to `tries` runs in all. A `comments list` the CLI reports as cut short
-        (a "Showing <n> of <m> results" notice) is a failure, not a success; any other notice is logged once and ignored."""
+        (a "Showing <n> of <m> results" notice) is a failure, not a success; any other notice is logged once and ignored.
+
+        Nothing fails silently: a call the CLI does not answer with `"ok": true` (an HTTP error, a usage error such as
+        `api post` without `-d`, empty or unreadable output, a non-zero exit) raises BasecampError naming the call (for
+        `api`, its endpoint), the CLI's error code and its exit status."""
         prof = ["-P", self.profile] if self.profile else []
         cmd = ["basecamp", "-a", self.account, *prof, *args, "-p", str(project or self.project), "--json"]
         for attempt in range(tries):
             kw = {"input": input} if input is not None else {}
             r = self.run(cmd, capture_output=True, text=True, timeout=120, **kw)
+            code = getattr(r, "returncode", 0)
             try:
                 out = json.loads(r.stdout)
-            except ValueError:
-                out = {"ok": False, "error": (r.stdout + r.stderr)[:300]}
+            except (TypeError, ValueError):
+                out = None
+            if not isinstance(out, dict):
+                said = ((r.stdout or "") + (r.stderr or "")).strip()[:300]
+                out = {"ok": False, "error": f"no JSON answer from the CLI: {said}" if said else "empty answer from the CLI"}
+            elif out.get("ok") and code:
+                out = {"ok": False, "error": f"the CLI answered ok but exited {code}: {(r.stderr or '').strip()[:300]}"}
             if out.get("ok") and args[:2] == ("comments", "list") and out.get("notice"):
                 notice = str(out["notice"])
                 if TRUNCATED.search(notice):
@@ -324,7 +334,9 @@ class Tools:
                 return out.get("data")
             if not out.get("retryable") or attempt == tries - 1:
                 self.errors += 1
-                raise BasecampError(f"basecamp {' '.join(args[:3])}: {out.get('error')}", out.get("code"), out.get("error"))
+                why = ", ".join(w for w in (f"code {out['code']}" if out.get("code") else "", f"exit {code}" if code else "") if w)
+                raise BasecampError(f"basecamp {' '.join(args[:3])}: {out.get('error')}" + (f" ({why})" if why else ""),
+                                    out.get("code"), out.get("error"))
             time.sleep(3)
 
     def comments(self, recording, project=None, newest=None):
@@ -2425,6 +2437,7 @@ class Tools:
         def post():
             out = self.bc("comments", "create", str(rec["thread"]), "-", input=text, project=rec.get("bucket"))
             posted.update(out if isinstance(out, dict) else {})
+            return out
         answer = self.reply_send(rid, f"on {where}", boost, rec.get("bucket"), post)
         state = self.load("threads.json", {})
         state[key].setdefault("replied", []).append(rid)
@@ -2453,24 +2466,35 @@ class Tools:
         """Answer `rid`: run `post` (the comment or line, `where` it goes), or with `boost`, boost `rid` itself with that
         text in `bucket` (default the project) through `boost`, which posts no second one with the same text."""
         if boost is None:
-            post()
+            got = post()
+            if not (isinstance(got, dict) and got.get("id")):
+                raise RuntimeError(f"reply {rid}: Basecamp answered the post {where} without an id; it may not be posted "
+                                   "(check before trying again)")
             self.log(f"reply {rid}: posted {where}")
             self.ledger("answered", recording=rid, via="reply")
         else:
             answer = self.boost(self.acting_id(), rid, boost, bucket)
+            if not answer:
+                raise RuntimeError(f"reply {rid}: Basecamp answered the boost {where} without an id; it may not be posted")
             self.log(f"reply {rid}: boosted {boost!r} ({where})")
             self.ledger("answered", recording=rid, via="reply --boost")
             return answer
 
     def remove_eyes(self, rid, bucket=None, answer=None, what="reply"):
         """Take the acting user's read acknowledgement (👀, or the config's "acknowledge" "read") off `rid`, except the
-        boost with id `answer`, the one that answered `rid`; `what` (the command) starts each log line."""
+        boost with id `answer`, the one that answered `rid`; `what` (the command) starts each log line. When it removed any,
+        it reads the boosts back and raises if Basecamp still shows one of them."""
         emoji = self.read_ack()
+        removed = []
         for b in self.boosts_by(self.acting_id(), rid, emoji, bucket):
             if answer is not None and b.get("id") == answer:
                 continue
             self.bc("api", "delete", f"/buckets/{bucket or self.project}/boosts/{b.get('id')}.json")
+            removed.append(b.get("id"))
             self.log(f"{what} {rid}: removed {emoji} boost {b.get('id')}")
+        left = [b.get("id") for b in self.boosts_by(self.acting_id(), rid, emoji, bucket) if b.get("id") in removed] if removed else []
+        if left:
+            raise RuntimeError(f"{what} {rid}: Basecamp still shows {emoji} boost {', '.join(map(str, left))} after removing it")
 
     def relayed_item(self, rid):
         """The relay ledger's last `relayed` line for recording `rid` (see item_recording); else one made from the last
@@ -2914,20 +2938,113 @@ class Tools:
                 self.log(f"todo complete {key}: card {rec['todo']} is already done in Basecamp")
             else:
                 self.bc("cards", "done", str(rec["todo"]), project=bucket)
+                self.verify_completed(f"todo complete {key}", rec["todo"], rec.get("bucket"), "card")
         elif rec.get("type") == "step":
             if self.todo(rec["todo"], rec.get("bucket"), "step").get("completed"):
                 self.log(f"todo complete {key}: step {rec['todo']} is already checked in Basecamp")
             else:
                 self.bc("subtasks", "complete", str(rec["todo"]), project=rec.get("bucket"))
+                self.verify_completed(f"todo complete {key}", rec["todo"], rec.get("bucket"), "step")
         else:
             self.bc("todos", "complete", str(rec["todo"]), project=rec.get("bucket"))
+            self.verify_completed(f"todo complete {key}", rec["todo"], rec.get("bucket"))
+        self.record_completed(key, "todo complete")
+        return True
+
+    def record_completed(self, key, what):
+        """Record tracked `key` completed (todos.json), once Basecamp shows it completed: its comments are no longer read,
+        the relay ledger counts it answered, and with "acknowledge" "decided" its deciding comments are boosted."""
         with self.locked("todos.json"):
             state = self.load("todos.json", {})
-            state[key]["completed"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            state[key]["completed"] = now_iso()
             self.save_json("todos.json", state)
-        self.log(f"todo complete {key}: completed todo {rec['todo']}")
-        self.ledger("answered", key=key, via="todo complete")
+        self.log(f"{what} {key}: completed todo {state[key]['todo']}")
+        self.ledger("answered", key=key, via=what)
         self.acknowledge_decided(key)
+
+    def verify_completed(self, what, tid, bucket=None, kind="todo"):
+        """Read to-do (card, step) `tid` back after completing it and raise when Basecamp does not show it completed: a
+        completion call that answered ok but changed nothing must not pass for done."""
+        got = self.todo(tid, bucket, kind)
+        if not got.get("completed"):
+            raise RuntimeError(f"{what}: Basecamp still shows {kind} {tid} open after the completion call "
+                               f"(status {got.get('status')!r}); it was not completed")
+
+    def todo_ref(self, ref):
+        """(bucket, to-do id) of `ref`: `<bucket>/<id>`, a to-do's Basecamp URL in this account, or a bare id (the
+        configured project)."""
+        s = str(ref).strip()
+        if "basecamp" in s:
+            return parse_recording(s, self.account)
+        m = re.fullmatch(r"(?:(\d+)/)?(\d+)", s)
+        if not m:
+            raise ValueError(f"{ref!r} is not a to-do: give <bucket>/<id>, its Basecamp URL or its id")
+        return m.group(1) or str(self.project), int(m.group(2))
+
+    def complete(self, ref, comment=None, out=print):
+        """Complete a to-do (`ref`: see todo_ref) that todos.json tracks or that the agent's login created (in any project
+        of the account, such as a decision to-do made outside `todo create`), and prove it: post `comment` (Markdown) on
+        it first when given, complete it, then read it back and raise unless Basecamp shows it completed. Any other
+        to-do is refused (raised) before anything is posted.
+
+        The comment is posted once per to-do: its id is kept in completions.json, so a run retried after a failed
+        completion does not post it twice. A to-do Basecamp already shows completed gets no comment and no write (and,
+        when tracked, is recorded completed). A to-do tracked in todos.json is recorded completed as `todo complete`
+        records it; a tracked card, card step or decision step goes through `todo complete` itself. Refused like the
+        other commands when the login is not the agent; a dry run reads and logs only. Prints the outcome."""
+        bucket, tid = self.todo_ref(ref)
+        name = f"complete {bucket}/{tid}"
+        hit = next(((k, r) for k, r in self.load("todos.json", {}).items()
+                    if str(r.get("todo")) == str(tid) and str(r.get("bucket") or self.project) == str(bucket)), None)
+        if hit and (hit[1].get("type") in ("card", "step") or hit[1].get("on")):
+            if comment:
+                raise ValueError(f"{name}: tracked {hit[1].get('type') or 'decision step'} {hit[0]}: "
+                                 "post the comment with `todo comment`, then complete it without --comment-file")
+            done = self.todo_complete(hit[0])
+            out(f"{name}: " + ("completed and verified" if done else "nothing to do; see sync.log"))
+            return done
+        if comment is not None and not comment.strip():
+            raise ValueError(f"{name}: empty comment")
+        todo = self.todo(tid, bucket)
+        if not hit and (todo.get("creator") or {}).get("id") != self.agent_id:
+            raise ValueError(f"{name}: not tracked in todos.json and not created by the agent's login "
+                             f"(creator {(todo.get('creator') or {}).get('id')}), so it is not the agent's to complete")
+        if todo.get("completed"):
+            self.log(f"{name}: already completed in Basecamp" + (", comment not posted" if comment else ""))
+            if hit and not hit[1].get("completed") and not self.dry:
+                self.record_completed(hit[0], "complete")
+            out(f"{name}: already completed in Basecamp")
+            return True
+        if self.refused(name, "owner"):
+            return False
+        if self.dry:
+            self.log(f"dry {name}: " + ("comment, then " if comment else "") + f"complete todo {tid} and read it back")
+            return False
+        if comment:
+            with self.locked("completions.json"):
+                posted = self.load("completions.json", {}).get(f"{bucket}/{tid}", {}).get("comment")
+            if posted:
+                self.log(f"{name}: comment {posted} already posted, not posting it again")
+            else:
+                c = self.bc("comments", "create", str(tid), "-", input=comment, project=bucket) or {}
+                if not c.get("id"):
+                    raise RuntimeError(f"{name}: Basecamp answered the comment without an id; it may not be posted")
+                with self.locked("completions.json"):
+                    state = self.load("completions.json", {})
+                    state.setdefault(f"{bucket}/{tid}", {})["comment"] = c["id"]
+                    self.save_json("completions.json", state)
+                self.log(f"{name}: comment {c['id']} on todo {tid}")
+        self.bc("todos", "complete", str(tid), project=bucket)
+        self.verify_completed(name, tid, bucket)
+        with self.locked("completions.json"):
+            state = self.load("completions.json", {})
+            state.setdefault(f"{bucket}/{tid}", {})["completed"] = now_iso()
+            self.save_json("completions.json", state)
+        if hit and not hit[1].get("completed"):
+            self.record_completed(hit[0], "complete")
+        else:
+            self.log(f"{name}: completed and verified")
+        out(f"{name}: completed and verified")
         return True
 
     def todo_subtask(self, ref, number):

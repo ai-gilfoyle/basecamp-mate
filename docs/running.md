@@ -86,7 +86,7 @@ When the right person signs in again, the next run logs
 the last good run left.
 
 `backup`, `timesheet post`, `watch` and every command that posts or records what the agent
-made of something (`reply`, `dismiss`, `todo create|track|comment|complete|subtask`,
+made of something (`reply`, `dismiss`, `complete`, `todo create|track|comment|complete|subtask`,
 `decide`, `ask`, `answer`, `post-message`, `schedule set`, `unmonitored handle`) make the
 same check, before and inside the state lock, so the agent never posts under someone
 else's name. The check is the same with or without `profile`.

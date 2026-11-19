@@ -1,7 +1,7 @@
 # Safety bounds
 
 - A timer run, `backup`, `timesheet post`, `watch` or any command that posts (`reply`,
-  `dismiss`, `todo` but `show`, `decide`, `ask`, `answer`, `post-message`, `schedule set`,
+  `dismiss`, `complete`, `todo` but `show`, `decide`, `ask`, `answer`, `post-message`, `schedule set`,
   `unmonitored handle`) whose login signs in as anyone but the agent (`agent` in the
   config), or whose config has no `agent`, does nothing: it reads only `/my/profile.json`,
   writes no state and logs a FAILED line, once per cause and then at most hourly. The
@@ -18,6 +18,13 @@
   `reply` answers there. Their only writes are the readers' 👀/👍
   acknowledgements and marking handled notifications read; never another home's. The
   agent's `reply` and `dismiss` take its own read boost off again.
+- No write fails silently. Every basecamp CLI call that is not answered `"ok": true` (an
+  HTTP error, a usage error, empty or unreadable output, or a non-zero exit) raises with the
+  call, its endpoint, the CLI's error code and its exit status; a command then exits 1 with
+  a FAILED line in `sync.log`. `todo complete` and `complete` read the to-do (card, step)
+  back and fail while Basecamp still shows it open, recording nothing. `reply` fails when
+  Basecamp answers its post or boost without an id, and `reply` and `dismiss` read the
+  boosts back after taking the read boost off and fail while one is still there.
 - Cards are never deleted, trashed or archived. Cards whose task left the backlog are
   left as they are (the run logs how many).
 - The sync never posts as a comment, and never to chat, except the opt-in session alert
@@ -182,8 +189,11 @@
   or id>` prints it as Basecamp has it now (open, assigned to the acting login, due date,
   repetition rule), reading only. `sync.py todo track --key
   <key> --todo <id>` adopts a to-do made some other way: its existing comments are skipped
-  and only later ones are recorded. Only tracked to-dos can be commented on or completed;
-  to-dos are never deleted, trashed or archived. All of these post nothing with no
+  and only later ones are recorded. Only tracked to-dos can be commented on with `todo`
+  commands, and completed with `todo complete`. `sync.py complete --todo <bucket>/<id>
+  [--comment-file <file>]` also completes a to-do the agent's login created in any project
+  (such as a decision to-do made outside `todo create`), and refuses any other to-do before
+  it posts. To-dos are never deleted, trashed or archived. All of these post nothing with no
   profile or a profile signed in as the owner, and `--dry-run` only logs.
 - Reports: with `message_board` set,
   `sync.py post-message --home <home> --config <config.json> --subject <text> --body-file <file>`

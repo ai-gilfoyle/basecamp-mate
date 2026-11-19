@@ -19,6 +19,7 @@ class TodoStub(Stub):
     def __init__(self):
         super().__init__()
         self.inputs, self.todo_records, self.fail_create = [], {}, False
+        self.card_records = {}  # card id -> its record, for the cards `cards create` made here (`cards done` completes one)
         self.notes, self.note_ids, self.inbox_exit = [], {}, 0  # fm-inbox.sh notes (request id, body, FM_HOME)
 
     def __call__(self, cmd, **kw):
@@ -39,6 +40,18 @@ class TodoStub(Stub):
             core = args[2:] if args[:1] == ["-P"] else args
             mine = (core[:2] in (["todos", "create"], ["todos", "complete"], ["subtasks", "create"], ["subtasks", "complete"], ["comments", "create"], ["messages", "create"])
                     or (core[:2] == ["api", "get"] and "/todos/" in core[2]))
+            if core[:2] == ["cards", "create"]:
+                out = super().__call__(cmd, **kw)
+                cid = json.loads(out.stdout)["data"]["id"]
+                self.card_records[str(cid)] = {"id": cid, "title": core[2], "completed": False}
+                return out
+            card = core[2].rsplit("/", 1)[1][:-5] if core[:2] == ["api", "get"] and "/card_tables/cards/" in core[2] else None
+            if card in self.card_records or (core[:2] == ["cards", "done"] and core[2] in self.card_records):
+                self.calls.append(core)
+                if card is None:
+                    self.card_records[core[2]]["completed"] = True
+                data = self.card_records[card] if card is not None else {}
+                return SimpleNamespace(stdout=json.dumps({"ok": True, "data": data}), stderr="", returncode=0)
             if mine:
                 self.profiles.append(args[1] if args[:1] == ["-P"] else None)
                 self.calls.append(core)

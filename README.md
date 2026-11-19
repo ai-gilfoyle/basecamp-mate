@@ -14,7 +14,11 @@ which runs a crew of other agents on your Linux computer.
 - **Decisions arrive as to-dos you answer from your phone.** When the agent needs you (a
   choice between options, an approval, a login only you can give) it assigns you a to-do
   with the context, the options and what it recommends. Your comment or boost on that
-  to-do is your answer, and it reaches the agent in about half a minute.
+  to-do is your answer, and it reaches the agent in about half a minute. Once the agent has
+  acted on your answer (not when the answer arrives), it completes the to-do with
+  `sync.py complete --todo <project id>/<to-do id> [--comment-file <file>]`, which posts its
+  note, completes the to-do and reads it back: if Basecamp still shows it open, the command
+  exits 1 and logs a FAILED line, so a to-do never stays open unnoticed.
 - **Chat with your agent.** Ask it something in the project's chat and it answers there.
   Turn on Pings and to-do requests, and you can also message it directly or assign it a
   to-do: it takes the work on, comments as it goes and completes the to-do when it is done.

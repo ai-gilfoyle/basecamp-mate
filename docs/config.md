@@ -142,6 +142,7 @@ claim, in `~/.local/state/basecamp-mate/runs/`; see [One home per project and lo
 | `participants.json` | the script | the project's non-client person ids, as last read for `"participants": {"project": true}` |
 | `companies.json` | the script | person id -> their company id, as last read for `"participants": {"company"}` |
 | `todos.json` | the script | to-do key -> to-do id, title, URL, created and completed times, comment cursor, owner comments recorded, acknowledgement boosts queued and done, comments replied to; for a to-do request (`request-<id>`), also who assigned it (`request`), how many times it was assigned (`requests`), a digest of its name and description, the project it is in (`bucket`, `project_name`), and why it closed (`closed`) |
+| `completions.json` | `sync.py complete` | `<bucket>/<to-do id>` -> the id of the comment posted on it (so a retry never posts it twice) and when Basecamp was read back showing it completed |
 | `assigned-todos.json` | the script | `ignored`: to-dos assigned to the acting login whose creator is not listened to, so the sweep fetches each once |
 | `sync.log` | the script | one line per action, plus a counts line per run |
 | `pending-comments.jsonl` | the script | captain comments and approvals waiting to be relayed, one JSON record per line (see [Pending records](records.md)) |
