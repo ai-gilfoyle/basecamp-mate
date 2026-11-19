@@ -309,9 +309,9 @@ class Tools:
         a retryable failure is tried again, up to `tries` runs in all. A `comments list` the CLI reports as cut short
         (a "Showing <n> of <m> results" notice) is a failure, not a success; any other notice is logged once and ignored.
 
-        Nothing fails silently: a call the CLI does not answer with `"ok": true` (an HTTP error, a usage error such as
-        `api post` without `-d`, empty or unreadable output, a non-zero exit) raises BasecampError naming the call (for
-        `api`, its endpoint), the CLI's error code and its exit status."""
+        Nothing fails silently: a call the CLI does not answer with `"ok": true` exactly (an HTTP error, a usage error
+        such as `api post` without `-d`, empty or unreadable output, any other "ok" value, a non-zero exit) raises
+        BasecampError naming the call (for `api`, its endpoint), the CLI's error code and its exit status."""
         prof = ["-P", self.profile] if self.profile else []
         cmd = ["basecamp", "-a", self.account, *prof, *args, "-p", str(project or self.project), "--json"]
         for attempt in range(tries):
@@ -325,9 +325,9 @@ class Tools:
             if not isinstance(out, dict):
                 said = ((r.stdout or "") + (r.stderr or "")).strip()[:300]
                 out = {"ok": False, "error": f"no JSON answer from the CLI: {said}" if said else "empty answer from the CLI"}
-            elif out.get("ok") and code:
+            elif out.get("ok") is True and code:
                 out = {"ok": False, "error": f"the CLI answered ok but exited {code}: {(r.stderr or '').strip()[:300]}"}
-            if out.get("ok") and args[:2] == ("comments", "list") and out.get("notice"):
+            if out.get("ok") is True and args[:2] == ("comments", "list") and out.get("notice"):
                 notice = str(out["notice"])
                 if TRUNCATED.search(notice):
                     self.errors += 1
@@ -335,7 +335,7 @@ class Tools:
                 if notice not in self.notices:
                     self.notices.add(notice)
                     self.log(f"basecamp {' '.join(args[:2])}: notice ignored (not a truncation): {notice}")
-            if out.get("ok"):
+            if out.get("ok") is True:
                 return out.get("data")
             if not out.get("retryable") or attempt == tries - 1:
                 self.errors += 1
@@ -2469,10 +2469,16 @@ class Tools:
         """`reply` on `rid`, already replied to (`rec` holds its reply), without `again`: nothing is posted or removed. It
         only reads the boosts on `rid` back and reports: it raises while Basecamp still shows the acting user's read
         boost there (other than the boost that answered `rid`, which `rec` "answers" keeps), else logs that it is off.
-        False: nothing was posted."""
+        A reply whose state keeps no answer (one made before "answers", or with a comment or line) may have answered
+        with that very boost, so a boost left there is only reported, with its role unknown. False: nothing was posted."""
         emoji = self.read_ack()
-        answer = (rec.get("answers") or {}).get(str(rid))
+        answers = rec.get("answers") or {}
+        answer = answers.get(str(rid))
         left = [b.get("id") for b in self.boosts_by(self.acting_id(), rid, emoji, bucket) if b.get("id") != answer]
+        if left and str(rid) not in answers:
+            self.log(f"reply {rid}: already replied; Basecamp shows {emoji} boost {', '.join(map(str, left))} on it, "
+                     "which may be the answer itself (this reply's state does not say); nothing was posted or removed")
+            return False
         if left:
             raise RuntimeError(f"reply {rid}: already replied, but Basecamp still shows {emoji} boost "
                                f"{', '.join(map(str, left))} on it; nothing was posted or removed")
@@ -3077,7 +3083,7 @@ class Tools:
                 self.save_json("todos.json", state)
             self.log(f"{name}: done, {sum(not s['done'] for s in subtasks)} left on todo {rec['todo']}")
             self.ledger("answered", key=key, via="todo subtask")
-        if not rec.get("request") and all(self.todo(s["id"], bucket, "subtask").get("completed")
+        if not rec.get("request") and all(s["done"] and self.todo(s["id"], bucket, "subtask").get("completed")
                                           for s in subtasks if s is not q):
             return self.todo_complete(key)
         if not was:

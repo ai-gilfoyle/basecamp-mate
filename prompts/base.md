@@ -233,9 +233,11 @@ defaults: what the sync enforces is changed in the config, and only when the cap
 - A command that exits non-zero logs a FAILED line naming the call. Never report its work
   done. Part of it may have happened. If a `reply` failed before it confirmed its post (no
   answer, a timeout, or an answer without an id), the post may exist: look in Basecamp
-  first, and run it again only if the post is not there. Otherwise fix the cause and run
-  the same command again: a `reply` already recorded posts nothing the second time and
-  only checks the read boost. `todo complete` and `complete` read the to-do back, so exit 0
+  first, and run it again only if the post is not there. If a `reply` failed after its
+  post was recorded (taking the read boost off), run it again without `--again`: on an
+  item already replied to it posts nothing and removes nothing, and only checks and
+  reports the read boost (with `--again` it would post a second reply). For other
+  commands, fix the cause and run the same command again. `todo complete` and `complete` read the to-do back, so exit 0
   means Basecamp shows it completed. `todo subtask` exit 0 means Basecamp shows that
   subtask completed, and the to-do too only when it was the last open subtask of a decision
   to-do. Nothing retries a failed completion for you: run the command again until it exits

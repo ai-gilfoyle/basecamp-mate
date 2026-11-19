@@ -19,7 +19,7 @@
   acknowledgements and marking handled notifications read; never another home's. The
   agent's `reply` and `dismiss` take its own read boost off again.
 - No write fails silently. Every basecamp CLI call that is not answered `"ok": true` (an
-  HTTP error, a usage error, empty or unreadable output, or a non-zero exit) raises with the
+  HTTP error, a usage error, empty or unreadable output, any other `ok` value, or a non-zero exit) raises with the
   call, its endpoint, the CLI's error code and its exit status; a command then exits 1 with
   a FAILED line in `sync.log`. `todo complete` and `complete` read the to-do (card, step)
   back and fail while Basecamp still shows it open, recording nothing. `todo subtask` reads
@@ -31,10 +31,12 @@
   agent runs the command again. `reply` fails when Basecamp answers its post or boost
   without an id, or gives no answer at all; the post may exist then, so check Basecamp
   before running it again. `reply` and `dismiss` read the boosts back after taking the
-  read boost off and fail while one is still there. A `reply` run again on what it already
-  answered posts nothing and removes nothing: it only reads the boosts back and fails
-  while the acting user's read boost is still there (the boost that answered, kept in
-  `answers`, aside).
+  read boost off and fail while one is still there. A `reply` run again, without
+  `--again`, on what it already answered posts nothing and removes nothing: it only reads
+  the boosts back and fails while the acting user's read boost is still there beside the
+  boost that answered (kept in `answers`). When the reply's state keeps no answer (a
+  comment or line, or a reply from before `answers`), a read boost left there is only
+  reported, since it may be the answer itself.
 - Cards are never deleted, trashed or archived. Cards whose task left the backlog are
   left as they are (the run logs how many).
 - The sync never posts as a comment, and never to chat, except the opt-in session alert

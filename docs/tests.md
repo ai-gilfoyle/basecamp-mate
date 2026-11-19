@@ -96,12 +96,12 @@ read-back shows the to-do open, completing again one recorded completed that Bas
 open, and failing non-zero for a login that may not post, a closed request, a request
 reopened and assigned to someone else, or a decision with no step of its own; `todo subtask`
 recording nothing while the subtask shows open, completing again one unchecked in Basecamp,
-leaving the to-do open while Basecamp shows another subtask open, and, run again on the last
+leaving the to-do open while Basecamp shows another subtask open or one checked there is not yet read, and, run again on the last
 subtask, completing the still-open to-do without a second subtask write; CLI calls raising on
 an HTTP error, a usage error, empty or unreadable output and an ok answer with a non-zero
-exit, each naming the call, code and exit; and `reply` failing on a post without an id and
+exit or an `ok` that is not exactly true, each naming the call, code and exit; and `reply` failing on a post without an id and
 on a read boost Basecamp still shows after removing it, and, run again, posting and removing
-nothing, failing while the read boost is still there and leaving the boost that answered.
+nothing, failing while a read boost is left beside the answer it kept, and only reporting one left by a reply whose state keeps no answer.
 
 `tests/test_login_guard.py` covers the agent check: a run signed in as someone other than
 the agent reads only `/my/profile.json` and writes no state (an established home and a new

@@ -225,6 +225,12 @@ class SubtaskReadBack(Base):
         self.assertTrue(self.stub.todo_records[str(self.tid)]["completed"])
         self.assertTrue(self.todos()["ta-x"]["completed"])
 
+    def test_a_sibling_checked_in_basecamp_but_not_yet_read_holds_the_todo_open(self):
+        self.stub.subtasks_done.add(str(self.tid + 2))  # checked by the captain; the timer has not read it yet
+        self.assertEqual(self.cli("todo", "subtask", "--todo", "ta-x", "--number", "1")[0], 0)
+        self.assertEqual(self.made("todos complete"), [])
+        self.assertNotIn("completed", self.todos()["ta-x"])
+
     def test_a_subtask_unchecked_in_basecamp_is_completed_again_and_holds_the_todo_open(self):
         self.assertEqual(self.cli("todo", "subtask", "--todo", "ta-x", "--number", "1")[0], 0)
         self.stub.subtasks_done.discard(str(self.tid + 1))  # unchecked in Basecamp
@@ -276,6 +282,11 @@ class LoudCalls(Base):
                 self.call(answer, "todos", "complete", str(TODO))
             self.assertIn(said, str(e.exception))
 
+    def test_an_ok_that_is_not_exactly_true_raises(self):
+        for ok in ("false", "true", 1, None):
+            with self.assertRaises(BasecampError):
+                self.call(Answer(json.dumps({"ok": ok, "data": None})), "todos", "complete", str(TODO))
+
     def test_an_ok_answer_with_a_non_zero_exit_raises(self):
         with self.assertRaises(BasecampError) as e:
             self.call(Answer(json.dumps({"ok": True, "data": None}), "boom", 3), "todos", "complete", str(TODO))
@@ -319,7 +330,7 @@ class ReplyReadBack(Base):
             s.remove_eyes(1)
         self.assertIn("still shows 👀 boost 5", str(e.exception))
 
-    def test_a_reply_run_again_posts_nothing_removes_nothing_and_reports_a_read_boost_left(self):
+    def test_a_reply_run_again_posts_nothing_removes_nothing_and_reports_a_read_boost_of_unknown_role(self):
         self.stub.boosts["1"] = [{"id": 5, "booster": {"id": ACTING}, "content": "👀"}]
         real = self.stub.__call__
 
@@ -333,14 +344,28 @@ class ReplyReadBack(Base):
             s.reply(1, "Yes.")
         self.assertEqual(self.state("chats.json")["77"]["replied"], [1])
         deletes = len(self.stub.deletes())
-        with self.assertRaises(RuntimeError) as e:
-            self.sync().reply(1, "Yes.")
-        self.assertIn("already replied, but Basecamp still shows 👀 boost 5", str(e.exception))
+        self.assertFalse(self.sync().reply(1, "Yes."))
+        self.assertIn("Basecamp shows 👀 boost 5 on it, which may be the answer itself", self.log())
         self.assertEqual(len(self.stub.chat_posts()), 1)  # nothing posted again
         self.assertEqual(len(self.stub.deletes()), deletes)  # nothing removed
         self.stub.boosts["1"] = []
         self.assertFalse(self.sync().reply(1, "Yes."))
         self.assertIn("Basecamp shows no 👀 left on it", self.log())
+
+    def test_an_older_boost_reply_answered_with_the_read_boost_is_reported_not_failed(self):
+        self.stub.boosts["1"] = [{"id": 5, "booster": {"id": ACTING}, "content": "👀"}]
+        self.side("chats.json", {"77": {"lines": [1], "replied": [1]}})  # replied before "answers"
+        self.assertFalse(self.sync().reply(1, boost="👀"))
+        self.assertIn("may be the answer itself", self.log())
+        self.assertEqual(self.stub.deletes(), [])
+
+    def test_a_read_boost_left_beside_a_kept_answer_fails(self):
+        self.stub.boosts["1"] = [{"id": 5, "booster": {"id": ACTING}, "content": "👀"}]
+        self.side("chats.json", {"77": {"lines": [1], "replied": [1], "answers": {"1": 9}}})
+        with self.assertRaises(RuntimeError) as e:
+            self.sync().reply(1, boost="Done")
+        self.assertIn("already replied, but Basecamp still shows 👀 boost 5", str(e.exception))
+        self.assertEqual(self.stub.deletes(), [])
 
     def test_a_retried_boost_reply_leaves_its_answer_and_reports_success(self):
         # Answered with the read boost itself: kept as the answer, then the reply is run again.
