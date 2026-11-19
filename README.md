@@ -20,7 +20,7 @@ which runs a crew of other agents on your Linux computer.
   in the config's `decision_lists`), which completes the to-do and reads it back: if
   Basecamp does not show it completed, the command exits 1 with a clear message and logs a
   FAILED line, so a failure is never silent. The agent then runs it again until it succeeds;
-  the sync does not retry it on its own.
+  the command does not retry it on its own.
 - **Chat with your agent.** Ask it something in the project's chat and it answers there.
   Turn on Pings and to-do requests, and you can also message it directly or assign it a
   to-do: it takes the work on, comments as it goes and completes the to-do when it is done.

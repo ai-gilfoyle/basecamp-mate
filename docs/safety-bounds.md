@@ -28,7 +28,7 @@
   so its exit 0 says the subtask is completed, and the to-do only when it was due to
   complete. All three also exit 1 when they completed nothing (a refused login, a closed
   request, a request no longer active and assigned to the agent, a decision with no step
-  of its own), except in a dry run. The sync never retries a completion on its own: the
+  of its own), except in a dry run. These commands do not retry a failed completion: the
   agent runs the command again. `reply` fails when Basecamp answers its post or boost
   without an id, or gives no answer at all; the post may exist then, so check Basecamp
   before running it again. `reply` and `dismiss` read the boosts back after taking the

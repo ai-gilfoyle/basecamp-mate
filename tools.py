@@ -2961,15 +2961,9 @@ class Tools:
         if not targets:
             self.log(f"{name}: no decision step of its own to complete")
             return False
-        read = [(tid, kind, self.todo(tid, bucket, kind)) for tid, kind in targets]
-        left = [(tid, kind) for tid, kind, got in read if not got.get("completed")]
-        me = self.agent()
-        if left and rec.get("request") and me is not None:
-            got = read[0][2]
-            if got.get("status") not in (None, "active") or me not in [a.get("id") for a in got.get("assignees") or []]:
-                self.log(f"{name}: Basecamp no longer shows it active and assigned to you "
-                         f"(status {got.get('status')!r}), not completing it")
-                return False
+        left = [(tid, kind) for tid, kind in targets if not self.todo(tid, bucket, kind).get("completed")]
+        if left and rec.get("request") and not self.request_open(name, rec):
+            return False
         if not left:
             self.log(f"{name}: already completed in Basecamp")
             if not rec.get("completed") and not self.dry:
@@ -3014,20 +3008,20 @@ class Tools:
         """Complete the decision to-do `ref` (`<bucket>/<to-do id>`): one the agent's login created, in a to-do list the
         config's "decision_lists" names (in any project of the account). It completes it, then reads it back and raises
         unless Basecamp shows it completed; the agent retries a failure itself. Any other to-do is refused (raised)
-        before anything is written, and so is one todos.json tracks (requests and tracked decision to-dos keep `todo
-        complete`). A to-do Basecamp already shows completed gets no write. True once Basecamp shows it completed;
-        False for a dry run, which reads and logs only."""
+        before anything is written; one todos.json tracks outside those lists keeps `todo complete`. A tracked one that
+        passes is recorded completed in todos.json. A to-do Basecamp already shows completed gets no write. True once
+        Basecamp shows it completed; False for a dry run, which reads and logs only."""
         m = re.fullmatch(r"(\d+)/(\d+)", str(ref).strip())
         if not m:
             raise ValueError(f"{ref!r} is not a to-do: give <bucket>/<to-do id>")
         bucket, tid = m.group(1), int(m.group(2))
         name = f"complete {bucket}/{tid}"
         key = next((k for k, r in self.load("todos.json", {}).items() if str(r.get("todo")) == str(tid)), None)
-        if key is not None:
-            raise ValueError(f"{name}: todos.json tracks it as {key}: complete it with `todo complete --todo {key}`")
         todo = self.todo(tid, bucket)
         parent = (todo.get("parent") or {}).get("id")
         if str(parent) not in self.decision_lists:
+            if key is not None:
+                raise ValueError(f"{name}: todos.json tracks it as {key}: complete it with `todo complete --todo {key}`")
             raise ValueError(f'{name}: its to-do list {parent} is not in the config\'s "decision_lists", so it is not '
                              "the agent's to complete")
         creator = (todo.get("creator") or {}).get("id")
@@ -3036,15 +3030,17 @@ class Tools:
                              "not the agent's to complete")
         if todo.get("completed"):
             self.log(f"{name}: already completed in Basecamp")
-            return True
-        if self.refused(name, "owner"):
-            raise RuntimeError(f"{name}: the login may not post, so it was not completed")
-        if self.dry:
-            self.log(f"dry {name}: complete todo {tid} and read it back")
-            return False
-        self.bc("todos", "complete", str(tid), project=bucket)
-        self.verify_completed(name, tid, bucket)
-        self.log(f"{name}: completed and verified")
+        else:
+            if self.refused(name, "owner"):
+                raise RuntimeError(f"{name}: the login may not post, so it was not completed")
+            if self.dry:
+                self.log(f"dry {name}: complete todo {tid} and read it back")
+                return False
+            self.bc("todos", "complete", str(tid), project=bucket)
+            self.verify_completed(name, tid, bucket)
+            self.log(f"{name}: completed and verified")
+        if key is not None and not self.dry and not self.load("todos.json", {})[key].get("completed"):
+            self.record_completed(key, "complete")
         return True
 
     def todo_subtask(self, ref, number):
@@ -3094,12 +3090,16 @@ class Tools:
 
     def request_open(self, name, rec):
         """True when the agent still owns request `rec`, as todo_complete requires before it writes: the reader has not
-        closed it, and Basecamp shows its to-do (card, step) active and assigned to the agent. Else logged, False."""
+        closed it, and Basecamp shows its to-do (card, step) not completed, active and assigned to the agent. Else
+        logged, False."""
         if rec.get("closed"):
             self.log(f"{name}: the request was closed ({rec['closed']}), not completing it")
             return False
-        me = self.agent()
         got = self.todo(rec["todo"], rec.get("bucket"), rec.get("type") or "todo")
+        if got.get("completed"):
+            self.log(f"{name}: Basecamp shows the request completed, not completing it")
+            return False
+        me = self.agent()
         if me is not None and (got.get("status") not in (None, "active")
                                or me not in [a.get("id") for a in got.get("assignees") or []]):
             self.log(f"{name}: Basecamp no longer shows the request active and assigned to you "

@@ -145,6 +145,13 @@ class Steps(AssignBase):
         self.assertIn("no longer shows the request active and assigned to you",
                       open(os.path.join(self.cfgdir, "sync.log")).read())
 
+    def test_a_step_on_a_request_completed_in_basecamp_is_not_completed_again(self):
+        before = self.request_step()
+        self.edit(42, completed=True)  # still active and assigned to the agent
+        self.assertFalse(self.sync().todo_subtask("request-42", 1))
+        self.assertEqual(len(self.made("subtasks complete")), before)
+        self.assertIn("Basecamp shows the request completed", open(os.path.join(self.cfgdir, "sync.log")).read())
+
     def test_an_operator_may_decide_and_no_one_else(self):
         self.decide(decider=OP)
         self.assertEqual(self.step()["decider"], OP)

@@ -112,13 +112,31 @@ class Complete(Base):
         self.assertIn('its to-do list 999 is not in the config\'s "decision_lists"', self.log())
         self.assertEqual(self.made("todos complete"), [])
 
-    def test_a_tracked_todo_is_refused_for_todo_complete(self):
+    def test_a_tracked_todo_outside_the_decision_lists_is_refused_for_todo_complete(self):
+        self.stub.todo_records[str(TODO)]["parent"] = {"id": 999, "type": "Todolist"}
         self.side("todos.json", {"request-42": {"todo": TODO, "bucket": BUCKET, "request": CAPTAIN,
                                                 "closed": "unassigned"}})
         code, _ = self.cli("complete", "--todo", REF)
         self.assertEqual(code, 1)
         self.assertIn("todos.json tracks it as request-42: complete it with `todo complete --todo request-42`", self.log())
         self.assertEqual(self.made("todos complete"), [])
+
+    def test_a_tracked_decision_todo_in_a_decision_list_is_completed_and_recorded(self):
+        # `decide` added a step to the agent's own decision to-do, so todos.json tracks it with "on"
+        self.side("todos.json", {"decision-merge": {"todo": TODO, "bucket": BUCKET, "on": True,
+                                                    "subtasks": [{"id": 7, "done": "2026-11-19T10:00:00Z",
+                                                                  "decider": CAPTAIN}]}})
+        code, _ = self.cli("complete", "--todo", REF)
+        self.assertEqual(code, 0, self.log())
+        self.assertEqual(self.made("todos complete"), [["todos", "complete", str(TODO)]])
+        self.assertTrue(self.stub.todo_records[str(TODO)]["completed"])
+        self.assertIn("completed", self.state("todos.json")["decision-merge"])
+
+    def test_a_tracked_decision_todo_left_open_fails_and_is_not_recorded(self):
+        self.side("todos.json", {"decision-merge": {"todo": TODO, "bucket": BUCKET, "on": True, "subtasks": []}})
+        self.stub.ignore_complete = True
+        self.assertEqual(self.cli("complete", "--todo", REF)[0], 1)
+        self.assertNotIn("completed", self.state("todos.json")["decision-merge"])
 
     def test_only_bucket_slash_id_names_the_todo(self):
         for bad in (str(TODO), f"https://3.basecamp.com/1111111/buckets/{BUCKET}/todos/{TODO}"):
@@ -186,7 +204,7 @@ class TodoCompleteReadBack(Base):
                                         "assignees": [{"id": CAPTAIN}]}
         self.side("todos.json", {"request-42": {"todo": 42, "request": CAPTAIN, "completed": "2026-11-18T10:00:00Z"}})
         self.assertEqual(self.cli("todo", "complete", "--todo", "request-42")[0], 1)
-        self.assertIn("no longer shows it active and assigned to you", self.log())
+        self.assertIn("no longer shows the request active and assigned to you", self.log())
         self.assertEqual(self.made("todos complete"), [])
 
     def test_a_decision_with_no_step_of_its_own_fails_non_zero(self):

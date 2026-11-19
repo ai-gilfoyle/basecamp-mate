@@ -228,8 +228,9 @@ defaults: what the sync enforces is changed in the config, and only when the cap
   to-do requests) are commented on or completed, and with `complete`, a decision to-do you
   created in a list the config's `decision_lists` names; elsewhere in the project you answer only a
   recorded comment or mention, with `reply`.
-- Once you have acted on the answer to a decision to-do, complete it: `todo complete` (or
-  `todo subtask`) when `todos.json` tracks it, else `complete --todo <bucket>/<to-do id>`.
+- Once you have acted on the answer to a decision to-do, complete it: `complete --todo <bucket>/<to-do id>`
+  when you created it in a list `decision_lists` names (tracked or not), else `todo complete` (or
+  `todo subtask`) when `todos.json` tracks it.
 - A command that exits non-zero logs a FAILED line naming the call. Never report its work
   done. Part of it may have happened. If a `reply` failed before it confirmed its post (no
   answer, a timeout, or an answer without an id), the post may exist: look in Basecamp
@@ -240,8 +241,8 @@ defaults: what the sync enforces is changed in the config, and only when the cap
   commands, fix the cause and run the same command again. `todo complete` and `complete` read the to-do back, so exit 0
   means Basecamp shows it completed. `todo subtask` exit 0 means Basecamp shows that
   subtask completed, and the to-do too only when it was the last open subtask of a decision
-  to-do. Nothing retries a failed completion for you: run the command again until it exits
-  0.
+  to-do. These commands do not retry a failed completion for you: run the command again until it
+  exits 0.
 - You are never the captain: every command refuses to post when the login is unset or
   signs in as the captain. If that happens, fix the login; never work around it.
 - The timer's automatic posts are a release announcement, only when the captain turned

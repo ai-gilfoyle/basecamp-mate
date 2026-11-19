@@ -47,8 +47,10 @@ or by hand from
 - `decision_lists` (optional): a list of to-do list ids, e.g. `[10525772928]`, in any
   project of the account: the lists that hold the agent's decision to-dos made outside
   `todo create`. `sync.py complete --todo <bucket>/<to-do id>` completes only a to-do in one
-  of them that the agent's login created, and never one that `todos.json` tracks (those use
-  `todo complete`). Absent or empty, `complete` refuses every to-do.
+  of them that the agent's login created. A tracked one that passes these checks (for
+  example a decision to-do `decide` added a step to) is also recorded completed in
+  `todos.json`. A tracked to-do outside these lists uses `todo complete`. Absent or empty,
+  `complete` refuses every to-do.
 - `message_board` (optional): the message board id `sync.py post-message` posts on; the
   owner's boosts on the agent's messages there are relayed.
 - `timezone` (optional): an IANA zone name (like `America/Chicago`) for the times the sync

@@ -52,7 +52,7 @@ without `schedule`, an edit and `todo show` carrying it, `sync.py schedule set|s
 captain, tracked from then on, the captain's comment there relayed with `on`, their checking
 the step recorded once (the agent's own never), the to-do or card itself never completed, a
 step joining a tracked request without completing it, a reopened step on a request that is
-closed or no longer assigned to the agent not completed again, only the captain or an operator
+closed, completed in Basecamp or no longer assigned to the agent not completed again, only the captain or an operator
 deciding, a URL naming the project, cards, refusals, the dry run and the CLI;
 `tests/test_decisions_anywhere.py` covers decisions anywhere: `todo create` in another
 project (its own to-do set, or the config's `todos` `project` and `list`), its subtasks,
@@ -90,7 +90,9 @@ then hourly, stale, removed and recycled-pid claims, the override, dry runs, com
 to-do the agent created in a `decision_lists` list of another project (completion, read
 back), a completion the read-back shows open failing non-zero, not retried by the timer, and
 completed when run again, a to-do already completed getting no write, a to-do outside the
-decision lists, created by someone else or tracked in `todos.json` refused, only
+decision lists, created by someone else, or tracked in `todos.json` outside those lists
+refused, a tracked decision to-do in such a list completed and recorded completed only once
+Basecamp shows it completed, only
 `<bucket>/<to-do id>` taken, `decision_lists` checked, the wrong login refused, a login that
 may not post failing non-zero, a dry run; `todo complete` recording nothing while the
 read-back shows the to-do open, completing again one recorded completed that Basecamp shows
