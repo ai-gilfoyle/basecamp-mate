@@ -61,7 +61,6 @@ BLOCKED_REPLY = "Sorry, I can't act on this: I only take requests from the peopl
 TRUNCATED = re.compile(r"Showing (\d+) of (\d+) results")
 
 # Logged once when a request's to-do, card or step refetch answers not_found: final for that record, never retried.
-PENDING_COMPLETIONS = "pending-completions.json"  # decision to-dos `sync.py complete` failed to complete, retried each run
 NOT_FOUND = "not found (deleted, or out of this login's reach)"
 
 
@@ -2344,7 +2343,7 @@ class Tools:
             target = f"/buckets/{self.project}/recordings/{rec['card']}/comments.json"
         where = f"chat {chat}" if chat is not None else f"card {rec['card']}"
         if rid in rec.get("replied", []) and not again:
-            return self.reply_again(rid, bucket, rec, boost)
+            return self.reply_again(rid, bucket, rec)
         if self.refused(f"reply {rid}"):
             return False
         if self.dry:
@@ -2367,7 +2366,7 @@ class Tools:
         """Answer the owner's line `rid` in Ping chat `chat` with a new line there, in the Ping's own bucket."""
         rec = self.load("pings.json", {})["pings"][chat]
         if rid in rec.get("replied", []) and not again:
-            return self.reply_again(rid, rec["bucket"], rec, boost)
+            return self.reply_again(rid, rec["bucket"], rec)
         if self.refused(f"reply {rid}"):
             return False
         bucket = rec["bucket"]
@@ -2390,7 +2389,7 @@ class Tools:
         with self.locked("todos.json"):
             rec = self.load("todos.json", {})[key]
         if rid in rec.get("replied", []) and not again:
-            return self.reply_again(rid, rec.get("bucket"), rec, boost)
+            return self.reply_again(rid, rec.get("bucket"), rec)
         if self.refused(f"reply {rid}"):
             return False
         if self.dry:
@@ -2411,7 +2410,7 @@ class Tools:
         with self.locked("messages.json"):
             rec = self.load("messages.json", {})["posts"][mid]
         if rid in rec.get("replied", []) and not again:
-            return self.reply_again(rid, None, rec, boost)
+            return self.reply_again(rid, None, rec)
         if self.refused(f"reply {rid}"):
             return False
         if self.dry:
@@ -2432,7 +2431,7 @@ class Tools:
         comment, when posted as one, and when the mark was set and ends)."""
         rec = self.load("threads.json", {})[key]
         if rid in rec.get("replied", []) and not again:
-            return self.reply_again(rid, rec.get("bucket"), rec, boost)
+            return self.reply_again(rid, rec.get("bucket"), rec)
         if self.refused(f"reply {rid}"):
             return False
         where = f"{rec.get('parent_type') or 'thread'} {rec['thread']}"
@@ -2466,24 +2465,18 @@ class Tools:
         self.remove_eyes(rid, rec.get("bucket"), answer)
         return True
 
-    def reply_again(self, rid, bucket, rec, boost=None):
-        """`reply` on `rid`, already replied to (`rec` holds its reply), without `again`: nothing is posted, but the read
-        boost is taken off and read back (remove_eyes), so a reply that posted and then failed to take it off is finished
-        by running it again. The boost that answered `rid` is never removed: the one `rec` "answers" keeps for it, and,
-        for an older reply that kept none, every read boost when `boost` (the answer given again) is the read boost
-        itself. False: nothing was posted; it raises while Basecamp still shows the read boost, and when the login may
-        not post (outside a dry run), since the read boost could not be checked then."""
-        self.log(f"reply {rid}: already replied, pass --again to post another; checking the read boost is off")
-        if self.refused(f"reply {rid}"):
-            raise RuntimeError(f"reply {rid}: the login may not post, so the read boost was not checked")
-        if self.dry:
-            self.log(f"dry reply {rid}: remove {EYES} if it is still there")
-            return False
+    def reply_again(self, rid, bucket, rec):
+        """`reply` on `rid`, already replied to (`rec` holds its reply), without `again`: nothing is posted or removed. It
+        only reads the boosts on `rid` back and reports: it raises while Basecamp still shows the acting user's read
+        boost there (other than the boost that answered `rid`, which `rec` "answers" keeps), else logs that it is off.
+        False: nothing was posted."""
+        emoji = self.read_ack()
         answer = (rec.get("answers") or {}).get(str(rid))
-        if answer is None and boost is not None and boost.strip() == self.read_ack():
-            self.log(f"reply {rid}: the answer is the read boost itself, left as it is")
-            return False
-        self.remove_eyes(rid, bucket, answer)
+        left = [b.get("id") for b in self.boosts_by(self.acting_id(), rid, emoji, bucket) if b.get("id") != answer]
+        if left:
+            raise RuntimeError(f"reply {rid}: already replied, but Basecamp still shows {emoji} boost "
+                               f"{', '.join(map(str, left))} on it; nothing was posted or removed")
+        self.log(f"reply {rid}: already replied (pass --again to post another); Basecamp shows no {emoji} left on it")
         return False
 
     @staticmethod
@@ -3012,157 +3005,41 @@ class Tools:
                                f"(status {got.get('status')!r}); it was not completed")
 
     def complete(self, ref):
-        """Complete the decision to-do `ref` (`<bucket>/<to-do id>`), one in a to-do list the config's "decision_lists"
-        names (in any project of the account), and prove it: complete it, then read it back and raise unless Basecamp
-        shows it completed. Any other to-do is refused (raised) before anything is written, and so is one todos.json
-        tracks (requests and tracked decision to-dos keep `todo complete`); both rules are checked afresh on each call.
-        A to-do Basecamp already shows completed gets no write.
-
-        It is kept in PENDING_COMPLETIONS before it is first read, and leaves it only once Basecamp shows it completed,
-        once it is refused, or once it was not found twice in a row while its project could be read: a failed read
-        (marked "lookup", so completion could not be verified), a failed completion or one Basecamp still shows open
-        stays there, and the timer retries it (retry_completions). True once Basecamp shows it completed; False for a
-        dry run, which reads and logs only."""
+        """Complete the decision to-do `ref` (`<bucket>/<to-do id>`): one the agent's login created, in a to-do list the
+        config's "decision_lists" names (in any project of the account). It completes it, then reads it back and raises
+        unless Basecamp shows it completed; the agent retries a failure itself. Any other to-do is refused (raised)
+        before anything is written, and so is one todos.json tracks (requests and tracked decision to-dos keep `todo
+        complete`). A to-do Basecamp already shows completed gets no write. True once Basecamp shows it completed;
+        False for a dry run, which reads and logs only."""
         m = re.fullmatch(r"(\d+)/(\d+)", str(ref).strip())
         if not m:
             raise ValueError(f"{ref!r} is not a to-do: give <bucket>/<to-do id>")
         bucket, tid = m.group(1), int(m.group(2))
-        ref = f"{bucket}/{tid}"
-        name = f"complete {ref}"
+        name = f"complete {bucket}/{tid}"
         key = next((k for k, r in self.load("todos.json", {}).items() if str(r.get("todo")) == str(tid)), None)
         if key is not None:
-            self.unpend(ref)
             raise ValueError(f"{name}: todos.json tracks it as {key}: complete it with `todo complete --todo {key}`")
-        if not self.dry:
-            self.pend_completion(ref)
-        try:
-            todo = self.todo(tid, bucket)
-        except Exception as e:
-            if not self.dry:
-                self.pend_completion(ref, error=e, lookup=True, missing=self.missing(e, bucket))
-            raise
+        todo = self.todo(tid, bucket)
         parent = (todo.get("parent") or {}).get("id")
         if str(parent) not in self.decision_lists:
-            self.unpend(ref)
             raise ValueError(f'{name}: its to-do list {parent} is not in the config\'s "decision_lists", so it is not '
                              "the agent's to complete")
-        if not todo.get("completed"):
-            try:
-                if self.refused(name, "owner"):
-                    raise RuntimeError(f"{name}: the login may not post, so it was not completed")
-                if self.dry:
-                    self.log(f"dry {name}: complete todo {tid} and read it back")
-                    return False
-                self.bc("todos", "complete", str(tid), project=bucket)
-                self.verify_completed(name, tid, bucket)
-            except Exception as e:
-                if not self.dry:
-                    self.pend_completion(ref, todo, e)
-                raise
-            self.log(f"{name}: completed and verified")
-        else:
+        creator = (todo.get("creator") or {}).get("id")
+        if self.agent_id is None or creator != self.agent_id:
+            raise ValueError(f"{name}: it was created by {creator}, not the agent's login ({self.agent_id}), so it is "
+                             "not the agent's to complete")
+        if todo.get("completed"):
             self.log(f"{name}: already completed in Basecamp")
-        self.unpend(ref)
-        return True
-
-    def missing(self, error, bucket):
-        """True when `error` is a not_found and project `bucket` itself can be read, so the to-do is gone, not out of
-        reach for a while."""
-        if getattr(error, "code", None) != "not_found":
+            return True
+        if self.refused(name, "owner"):
+            raise RuntimeError(f"{name}: the login may not post, so it was not completed")
+        if self.dry:
+            self.log(f"dry {name}: complete todo {tid} and read it back")
             return False
-        try:
-            self.bc("api", "get", f"/projects/{bucket}.json", project=bucket)
-        except Exception:
-            return False
+        self.bc("todos", "complete", str(tid), project=bucket)
+        self.verify_completed(name, tid, bucket)
+        self.log(f"{name}: completed and verified")
         return True
-
-    def pend_completion(self, ref, todo=None, error=None, lookup=False, missing=False):
-        """Keep decision to-do `ref` (`<bucket>/<id>`) in PENDING_COMPLETIONS: as read (`todo`: its title and URL), and
-        after a failure, its `error`, whether it was the read (`lookup`) and how many times in a row it was not found
-        while its project could be read (`missing`; the second drops it). The first time it was kept, when it was last
-        tried and whether the agent was told are kept. A dry run keeps nothing."""
-        if self.dry:
-            return
-        with self.locked(PENDING_COMPLETIONS):
-            pending = self.load(PENDING_COMPLETIONS, {})
-            p = dict(pending.get(ref) or {"since": now_iso()})
-            if todo:
-                p.update(title=todo.get("content"), url=todo.get("app_url"))
-            if error is not None:
-                p.update(error=f"{type(error).__name__}: {error}", lookup=lookup)
-                p["missing"] = p.get("missing", 0) + 1 if missing else 0
-            if p.get("missing", 0) >= 2:
-                pending.pop(ref, None)
-                self.log(f"complete {ref}: not found twice while its project reads, no longer pending")
-            else:
-                pending[ref] = p
-            self.save_json(PENDING_COMPLETIONS, pending)
-
-    def unpend(self, ref):
-        """Drop `ref` from PENDING_COMPLETIONS, when it is there. A dry run keeps everything."""
-        if self.dry:
-            return
-        with self.locked(PENDING_COMPLETIONS):
-            pending = self.load(PENDING_COMPLETIONS, {})
-            if pending.pop(ref, None) is not None:
-                self.save_json(PENDING_COMPLETIONS, pending)
-
-    def retry_completions(self):
-        """Retry one decision to-do in PENDING_COMPLETIONS (complete): the one tried least recently, so a run spends at
-        most one to-do's calls on it and every one gets its turn. One that fails again, or is dropped without Basecamp
-        showing it completed, is told to the agent once, as a `completion-failed` note in its firstmate inbox (the
-        --home's bin/fm-inbox.sh, or the config's "inbox" "fm_home"), whether or not inbox delivery is on; a note that
-        cannot be delivered is logged FAILED once and tried again next run. A dry run does nothing."""
-        if self.dry:
-            return
-        pending = self.load(PENDING_COMPLETIONS, {})
-        if not pending:
-            return
-        ref = min(pending, key=lambda r: (pending[r].get("tried") or "", r))
-        with self.locked(PENDING_COMPLETIONS):
-            pending = self.load(PENDING_COMPLETIONS, {})
-            pending[ref]["tried"] = now_iso()
-            self.save_json(PENDING_COMPLETIONS, pending)
-        before = pending[ref]
-        try:
-            self.complete(ref)
-            self.log(f"complete {ref}: Basecamp shows it completed, no longer pending")
-            return
-        except Exception as e:
-            error = e
-        p = self.load(PENDING_COMPLETIONS, {}).get(ref)
-        gone, p = p is None, p or before
-        if p.get("noted"):
-            return
-        bucket, tid = ref.split("/")
-        note = {"kind": "completion-failed", "bucket": int(bucket), "todo": int(tid), "title": p.get("title"),
-                "url": p.get("url"), "since": p.get("since"), "error": f"{type(error).__name__}: {error}",
-                "unverified": bool(p.get("lookup")), "gone": gone}
-        try:
-            self.tell_agent(note)
-            self.log(f"complete {ref}: still not completed on retry, the agent is told: {note['error']}")
-            p = dict(p, noted=now_iso())
-        except Exception as e:
-            if p.get("note_failed"):
-                self.log(f"complete {ref}: the note to the agent still fails: {type(e).__name__}: {e}")
-            else:
-                self.log(f"FAILED complete {ref}: still not completed, and the note to the agent failed (it needs a "
-                         f"firstmate inbox, bin/fm-inbox.sh): {type(e).__name__}: {e}")
-                p = dict(p, note_failed=now_iso())
-        if not gone:
-            with self.locked(PENDING_COMPLETIONS):
-                pending = self.load(PENDING_COMPLETIONS, {})
-                if ref in pending:
-                    pending[ref] = dict(pending[ref], **{k: p[k] for k in ("noted", "note_failed") if k in p})
-                    self.save_json(PENDING_COMPLETIONS, pending)
-
-    def tell_agent(self, rec):
-        """Deliver pending record `rec` straight to the agent's firstmate inbox as a note (inbox_note): the config's
-        "inbox" "fm_home", else the --home. Raises when it cannot be delivered."""
-        from behaviors import inbox_note  # behaviors imports this module
-        rid, body = inbox_note(rec, self.account, self.project)
-        inbox = self.cfg.get("inbox")
-        self.inbox_note(os.path.abspath((inbox if isinstance(inbox, dict) else {}).get("fm_home") or self.home), rid, body)
 
     def todo_subtask(self, ref, number):
         """Complete subtask `number` (from 1) of a tracked to-do, answered, as Basecamp's native subtask (a decision step

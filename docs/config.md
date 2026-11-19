@@ -47,8 +47,8 @@ or by hand from
 - `decision_lists` (optional): a list of to-do list ids, e.g. `[10525772928]`, in any
   project of the account: the lists that hold the agent's decision to-dos made outside
   `todo create`. `sync.py complete --todo <bucket>/<to-do id>` completes only a to-do in one
-  of them, and never one that `todos.json` tracks (those use `todo complete`). Absent or
-  empty, `complete` refuses every to-do.
+  of them that the agent's login created, and never one that `todos.json` tracks (those use
+  `todo complete`). Absent or empty, `complete` refuses every to-do.
 - `message_board` (optional): the message board id `sync.py post-message` posts on; the
   owner's boosts on the agent's messages there are relayed.
 - `timezone` (optional): an IANA zone name (like `America/Chicago`) for the times the sync
@@ -147,7 +147,6 @@ claim, in `~/.local/state/basecamp-mate/runs/`; see [One home per project and lo
 | `participants.json` | the script | the project's non-client person ids, as last read for `"participants": {"project": true}` |
 | `companies.json` | the script | person id -> their company id, as last read for `"participants": {"company"}` |
 | `todos.json` | the script | to-do key -> to-do id, title, URL, created and completed times, comment cursor, owner comments recorded, acknowledgement boosts queued and done, comments replied to and the boost that answered each (`answers`); for a to-do request (`request-<id>`), also who assigned it (`request`), how many times it was assigned (`requests`), a digest of its name and description, the project it is in (`bucket`, `project_name`), and why it closed (`closed`) |
-| `pending-completions.json` | `sync.py complete`, the script | `<bucket>/<to-do id>` -> a decision to-do `complete` has not yet seen completed (kept before its first read): its title, URL, the last error and whether it was the read (`lookup`), how many times in a row it was not found while its project read (`missing`), since when, when it was last tried (`tried`), and when the agent was told (`noted`) or the note failed (`note_failed`); each timer run retries the one tried least recently and drops it once Basecamp shows it completed, it is refused, or it was not found twice |
 | `assigned-todos.json` | the script | `ignored`: to-dos assigned to the acting login whose creator is not listened to, so the sweep fetches each once |
 | `sync.log` | the script | one line per action, plus a counts line per run |
 | `pending-comments.jsonl` | the script | captain comments and approvals waiting to be relayed, one JSON record per line (see [Pending records](records.md)) |

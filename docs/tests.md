@@ -86,28 +86,22 @@ home's live overlapping run (project, login by person or profile, Pings), loggin
 then hourly, stale, removed and recycled-pid claims, the override, dry runs, commands,
 `sync.py status`, and `doctor`'s overlap check;
 `tests/test_complete.py` covers writes that cannot fail silently: `sync.py complete` on a
-to-do in a `decision_lists` list of another project (completion, read back), a completion
-the read-back shows open failing non-zero and kept in `pending-completions.json`, a failed
-first read kept too (its note says completion could not be verified), the timer retrying
-one pending to-do per run (the one tried least recently) until Basecamp shows it completed,
-a retry that fails again delivering one `completion-failed` note to the firstmate inbox with
-`inbox` off, a note that cannot be delivered logged FAILED once and tried again, a not_found
-dropped only the second time in a row while its project reads, one no longer in a decision
-list told and dropped, a to-do already completed getting no write, a to-do outside the
-decision lists or tracked in `todos.json` refused, only `<bucket>/<to-do id>` taken,
-`decision_lists` checked, the wrong login refused, a login that may not post failing
-non-zero, a dry run; `todo complete` recording nothing while the read-back shows the to-do
-open, completing again one recorded completed that Basecamp shows open, and failing non-zero
-for a login that may not post, a closed request, a request reopened and assigned to someone
-else, or a decision with no step of its own; `todo subtask` recording nothing while the
-subtask shows open, completing again one unchecked in Basecamp, leaving the to-do open while
-Basecamp shows another subtask open, and, run again on the last subtask, completing the
-still-open to-do without a second subtask write; CLI calls raising on an HTTP error, a usage
-error, empty or unreadable output and an ok answer with a non-zero exit, each naming the
-call, code and exit; and `reply` failing on a post without an id and on a read boost
-Basecamp still shows after removing it, and, run again, posting nothing and taking the read
-boost off, never removing the boost that answered (kept, or, for an older reply, given
-again as the answer), and failing non-zero when the login may not post.
+to-do the agent created in a `decision_lists` list of another project (completion, read
+back), a completion the read-back shows open failing non-zero, not retried by the timer, and
+completed when run again, a to-do already completed getting no write, a to-do outside the
+decision lists, created by someone else or tracked in `todos.json` refused, only
+`<bucket>/<to-do id>` taken, `decision_lists` checked, the wrong login refused, a login that
+may not post failing non-zero, a dry run; `todo complete` recording nothing while the
+read-back shows the to-do open, completing again one recorded completed that Basecamp shows
+open, and failing non-zero for a login that may not post, a closed request, a request
+reopened and assigned to someone else, or a decision with no step of its own; `todo subtask`
+recording nothing while the subtask shows open, completing again one unchecked in Basecamp,
+leaving the to-do open while Basecamp shows another subtask open, and, run again on the last
+subtask, completing the still-open to-do without a second subtask write; CLI calls raising on
+an HTTP error, a usage error, empty or unreadable output and an ok answer with a non-zero
+exit, each naming the call, code and exit; and `reply` failing on a post without an id and
+on a read boost Basecamp still shows after removing it, and, run again, posting and removing
+nothing, failing while the read boost is still there and leaving the boost that answered.
 
 `tests/test_login_guard.py` covers the agent check: a run signed in as someone other than
 the agent reads only `/my/profile.json` and writes no state (an established home and a new

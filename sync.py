@@ -131,8 +131,7 @@ class Sync(Tools):
         """One run: each behavior that is on, in order; a behavior left out of the config makes no calls.
 
         With `due` (the timer's run), only the behaviors whose cadence has passed since
-        they last ran (timer.json); otherwise all of them. Every run then retries one decision to-do `complete` failed to
-        complete (retry_completions), after the behaviors so they keep their time. The card mirror's slot logs
+        they last ran (timer.json); otherwise all of them. The card mirror's slot logs
         "cards off" when it is off, so sync.log shows the timer alive every 5 minutes. It
         holds the shared state lock throughout, so a command waits for it.
         """
@@ -167,7 +166,6 @@ class Sync(Tools):
                     self.save_json("timer.json", timer)
             if not self.dry:
                 self.save_json("timer.json", timer)
-            self.retry_completions()
         return plan
 
     def watch(self, url, after_line=None, until=None):
@@ -485,9 +483,10 @@ def cli(argv=None, runner=subprocess.run):
             a.recording, None if a.boost is not None else read(a.body_file), again=a.again, boost=a.boost,
             awaiting=a.awaiting), runner, guard=True)
     if argv[:1] == ["complete"]:
-        ap = common("sync.py complete", 'Complete a decision to-do, one in a to-do list the config\'s "decision_lists" '
-                                        "names, in any project, and verify it: complete it, then read it back; exits 1 "
-                                        "with a FAILED line unless Basecamp shows it completed (the timer then retries it).")
+        ap = common("sync.py complete", "Complete a decision to-do the agent's login created, in a to-do list the "
+                                        'config\'s "decision_lists" names, in any project, and verify it: complete it, '
+                                        "then read it back; exits 1 with a FAILED line unless Basecamp shows it "
+                                        "completed (run it again then).")
         ap.add_argument("--todo", required=True, help="<bucket>/<to-do id>")
         ap.add_argument("--dry-run", action="store_true")
         a = ap.parse_args(argv[1:])

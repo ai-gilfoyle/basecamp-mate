@@ -21,24 +21,20 @@
 - No write fails silently. Every basecamp CLI call that is not answered `"ok": true` (an
   HTTP error, a usage error, empty or unreadable output, or a non-zero exit) raises with the
   call, its endpoint, the CLI's error code and its exit status; a command then exits 1 with
-  a FAILED line in `sync.log`. `todo complete`, `todo subtask` and `complete` read the to-do
-  (card, step, subtask) back and fail while Basecamp still shows it open, recording
-  nothing; they also exit 1 when they completed nothing (a refused login, a closed
+  a FAILED line in `sync.log`. `todo complete` and `complete` read the to-do (card, step)
+  back and fail while Basecamp still shows it open, recording nothing. `todo subtask` reads
+  back the subtask it completes, and the to-do too when that subtask was the last open one,
+  so its exit 0 says the subtask is completed, and the to-do only when it was due to
+  complete. All three also exit 1 when they completed nothing (a refused login, a closed
   request, a request no longer active and assigned to the agent, a decision with no step
-  of its own), except in a dry run. `complete` keeps the to-do in
-  `pending-completions.json` before it first reads it, and the timer retries one such
-  to-do per run, after the behaviors, until Basecamp shows it completed (or it is refused,
-  or not found twice while its project reads). The first retry that fails too tells the
-  agent once with a `completion-failed` note delivered straight to its firstmate inbox
-  (`bin/fm-inbox.sh` in the `--home`, or `inbox` `fm_home`), even with `inbox` off; a home
-  without one logs a FAILED line instead. `reply` fails when Basecamp answers its post or
-  boost without an id (it may be posted: check Basecamp before running it again), and
-  `reply` and `dismiss` read the boosts back after taking the read boost off and fail
-  while one is still there. A `reply` that posted and then failed has recorded its
-  answer: running it again posts nothing and only takes the read boost off and reads it
-  back, never removing the boost that answered (kept in `answers`; for an older reply, any
-  read boost when the answer given again is the read boost itself), and fails when the
-  login may not post.
+  of its own), except in a dry run. The sync never retries a completion on its own: the
+  agent runs the command again. `reply` fails when Basecamp answers its post or boost
+  without an id, or gives no answer at all; the post may exist then, so check Basecamp
+  before running it again. `reply` and `dismiss` read the boosts back after taking the
+  read boost off and fail while one is still there. A `reply` run again on what it already
+  answered posts nothing and removes nothing: it only reads the boosts back and fails
+  while the acting user's read boost is still there (the boost that answered, kept in
+  `answers`, aside).
 - Cards are never deleted, trashed or archived. Cards whose task left the backlog are
   left as they are (the run logs how many).
 - The sync never posts as a comment, and never to chat, except the opt-in session alert
@@ -205,9 +201,9 @@
   <key> --todo <id>` adopts a to-do made some other way: its existing comments are skipped
   and only later ones are recorded. Only tracked to-dos can be commented on with `todo`
   commands, and completed with `todo complete`. `sync.py complete --todo <bucket>/<to-do
-  id>` also completes a to-do in a to-do list the config's `decision_lists` names (the
-  agent's decision to-dos made outside `todo create`, in any project), and refuses any
-  other to-do, and any to-do `todos.json` tracks, before it writes. To-dos are never
+  id>` also completes a to-do the agent's login created in a to-do list the config's
+  `decision_lists` names (its decision to-dos made outside `todo create`, in any project),
+  and refuses any other to-do, and any to-do `todos.json` tracks, before it writes. To-dos are never
   deleted, trashed or archived. All of these post nothing with no profile or a profile
   signed in as the owner, and `--dry-run` only logs.
 - Reports: with `message_board` set,

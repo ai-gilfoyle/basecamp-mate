@@ -262,8 +262,9 @@ Then wait for their comment or boost; do not ask the same thing in chat as well.
   (on a to-do with subtasks, `todo subtask` for each question it answers instead). A decision
   to-do you made some other way, not tracked, in a list the config's `decision_lists`
   names: `python3 SYNC/sync.py complete C --todo <bucket>/<id>`. Complete it once you have
-  acted, not when the answer arrives. Both read the to-do back and exit 1 while it is still
-  open: then it is not done.
+  acted, not when the answer arrives. `todo complete` and `complete` read the to-do back
+  and exit 1 while it is still open; `todo subtask` reads back its subtask, and the to-do
+  only once its last subtask is done. Exit 1 means it is not done: run it again.
 - **Feedback or a question rather than a decision** (e.g. "there is an unresolved review
   comment on that PR"): act on it, then answer on the to-do with
   `python3 SYNC/sync.py reply C --recording <comment> --body-file <file>` (for a boost,

@@ -147,9 +147,8 @@ on it (relaying first if this is not the main firstmate's home), then
 `sync.py todo complete --todo <key>`. A decision to-do you made outside `todo create` (not in
 `todos.json`), in a to-do list the config's `decision_lists` names, is completed with
 `sync.py complete --todo <bucket>/<to-do id>`, which completes the to-do and reads it back;
-never complete one with the `basecamp` CLI. A `complete` that fails is retried by the timer
-(one such to-do per run) until Basecamp shows the to-do completed, and a `completion-failed`
-note in your inbox tells you once when the retry fails too. Complete a decision to-do once you have acted on the answer, not
+never complete one with the `basecamp` CLI. The sync never retries a failed completion: you
+run the command again until it exits 0. Complete a decision to-do once you have acted on the answer, not
 when it arrives. Both commands exit 1 with a FAILED line while Basecamp still shows the to-do
 open: it is not done, so never report it done. Feedback that is not a decision: act on it and
 answer with `sync.py reply --recording <comment id>`; the to-do stays open. Complete a
@@ -420,7 +419,7 @@ The main firstmate's own home answers its questions itself rather than relaying.
   itself never uses it.
 - Post, comment, complete, delete, archive or trash anything in Basecamp outside `sync.py`
   and its commands (`reply`, `ask`, `answer`, `todo create|track|comment|complete|subtask`, `complete`, `decide`,
-  `post-message`), or hand-edit `todos.json`, `pings.json`, `notifications.json`, `threads.json`, `timer.json`, `assigned-todos.json`, `participants.json`, `companies.json`, `blocked.json`, `pending-completions.json` or `unmonitored.json`.
+  `post-message`), or hand-edit `todos.json`, `pings.json`, `notifications.json`, `threads.json`, `timer.json`, `assigned-todos.json`, `participants.json`, `companies.json`, `blocked.json` or `unmonitored.json`.
   The sync's automatic posts are a release announcement (releases only: GitHub releases
   of the repos in `releases`, never merges or PRs, Message Board only), the opt-in session
   alert, and, with `blocked` on, the short reply to a blocked sender. Never announce

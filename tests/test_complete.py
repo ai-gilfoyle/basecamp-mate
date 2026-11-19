@@ -1,5 +1,5 @@
-"""Tests for writes that cannot fail silently: `sync.py complete` (a decision to-do in a list "decision_lists" names,
-completed and read back, retried by the timer until Basecamp shows it completed), the read-back and exit status of
+"""Tests for writes that cannot fail silently: `sync.py complete` (a decision to-do the agent created in a list
+"decision_lists" names, completed and read back), the read-back and exit status of
 `todo complete` and `todo subtask`, `reply` and `dismiss`, and the basecamp CLI calls that raise on any answer that is
 not ok (an HTTP error, a usage error, empty or unreadable output, a non-zero exit).
 
@@ -28,18 +28,10 @@ class CompleteStub(TodoStub):
     def __init__(self):
         super().__init__()
         self.ignore_complete = self.ignore_subtask = False
-        self.fail_get = {}  # `api get` path -> the CLI's failed answer for it (a timeout, not_found)
 
     def __call__(self, cmd, **kw):
         args = cmd[3:-3] if cmd[0] == "basecamp" else []
         core = args[2:] if args[:1] == ["-P"] else args
-        if core[:2] == ["api", "get"] and core[2] in self.fail_get:
-            self.calls.append(core)
-            return SimpleNamespace(stdout=json.dumps(self.fail_get[core[2]]), stderr="", returncode=1)
-        if core[:2] == ["api", "get"] and core[2].startswith("/projects/") and core[2].count("/") == 2:
-            self.calls.append(core)  # the project itself, readable
-            return SimpleNamespace(stdout=json.dumps({"ok": True, "data": {"id": int(core[2][10:-5])}}), stderr="",
-                                   returncode=0)
         if (self.ignore_complete and core[:2] == ["todos", "complete"]
                 or self.ignore_subtask and core[:2] == ["subtasks", "complete"]):
             self.calls.append(core)
@@ -52,9 +44,9 @@ class Base(ToolBase):
         super().setUp()
         self.stub = CompleteStub()
         # Gilfoyle's home: decision to-dos made outside `todo create` in a list named in "decision_lists", no "todos"
-        self.cfg(drop=("todos", "inbox"), decision_lists=[LIST])  # inbox delivery off: the failure note still arrives
+        self.cfg(drop=("todos",), decision_lists=[LIST])
         self.stub.todo_records[str(TODO)] = {"id": TODO, "content": "Merge?", "completed": False, "status": "active",
-                                             "parent": {"id": LIST, "type": "Todolist"}}
+                                             "parent": {"id": LIST, "type": "Todolist"}, "creator": {"id": ACTING}}
 
     def cli(self, *args):
         out = io.StringIO()
@@ -74,10 +66,6 @@ class Base(ToolBase):
     def made(self, verb):
         return self.stub.made(verb)
 
-    def failed(self):
-        """The completion-failed notes delivered to the firstmate inbox (fm-inbox.sh): (request id, body)."""
-        return [(n[0], n[1]) for n in self.stub.notes if n[0].startswith("basecamp-completion-failed-")]
-
 
 class Complete(Base):
     def test_completes_a_todo_in_a_decision_list_of_another_project_and_verifies_it(self):
@@ -89,104 +77,26 @@ class Complete(Base):
         reads = [i for i, c in enumerate(self.stub.calls) if c == ["api", "get", f"/buckets/{BUCKET}/todos/{TODO}.json"]]
         self.assertGreater(reads[-1], self.stub.calls.index(["todos", "complete", str(TODO)]))  # read back after
         self.assertTrue(self.stub.todo_records[str(TODO)]["completed"])
-        self.assertEqual(self.state("pending-completions.json"), {})
 
-    def test_a_completion_the_read_back_shows_open_fails_non_zero_and_is_kept_to_retry(self):
+    def test_a_completion_the_read_back_shows_open_fails_non_zero_and_running_it_again_completes_it(self):
         self.stub.ignore_complete = True
         code, out = self.cli("complete", "--todo", REF)
         self.assertEqual(code, 1)
         self.assertIn(f"FAILED complete {REF} RuntimeError: complete {REF}: Basecamp still shows todo {TODO} open after "
                       "the completion call", self.log())
         self.assertIn("FAILED", out)  # the agent that ran it sees the failure, not only sync.log
-        p = self.state("pending-completions.json")[REF]
-        self.assertEqual(p["title"], "Merge?")
-        self.assertIn("still shows todo", p["error"])
-        self.assertNotIn("noted", p)
-
-    def test_the_timer_retries_a_failed_completion_until_basecamp_shows_it_completed(self):
-        self.stub.ignore_complete = True
-        self.assertEqual(self.cli("complete", "--todo", REF)[0], 1)
+        self.poll()
+        self.assertEqual(len(self.made("todos complete")), 1)  # the timer never retries it
         self.stub.ignore_complete = False
-        self.poll()
+        self.assertEqual(self.cli("complete", "--todo", REF)[0], 0)
         self.assertTrue(self.stub.todo_records[str(TODO)]["completed"])
-        self.assertEqual(self.state("pending-completions.json"), {})
-        self.assertEqual(self.failed(), [])
-        n = len(self.made("todos complete"))
-        self.poll()
-        self.assertEqual(len(self.made("todos complete")), n)  # nothing left to retry
 
-    def test_a_retry_that_fails_again_tells_the_agent_once_and_keeps_retrying(self):
-        self.stub.ignore_complete = True
-        self.cli("complete", "--todo", REF)
-        self.poll()
-        self.poll()
-        [(rid, body)] = self.failed()
-        self.assertEqual(rid, f"basecamp-completion-failed-{BUCKET}-{TODO}")
-        self.assertIn("'Merge?'", body)
-        self.assertIn("is still open", body)
-        self.assertTrue(self.state("pending-completions.json")[REF]["noted"])
-        self.assertEqual(len(self.made("todos complete")), 3)  # the command and both runs
-        self.assertIn(f"Commands: sync.py complete --todo {REF}.", body)
-        self.stub.ignore_complete = False
-        self.poll()
-        self.assertEqual(self.state("pending-completions.json"), {})
-        self.assertEqual(len(self.failed()), 1)
-
-    def test_a_retry_of_a_todo_no_longer_in_a_decision_list_is_told_once_and_dropped(self):
-        self.stub.ignore_complete = True
-        self.cli("complete", "--todo", REF)
-        self.cfg(decision_lists=[])
-        self.poll()
-        [(_, body)] = self.failed()
-        self.assertIn("the timer no longer retries it", body)
-        self.assertEqual(self.state("pending-completions.json"), {})
-
-    def test_a_failed_first_read_is_kept_and_its_note_says_completion_could_not_be_verified(self):
-        get = f"/buckets/{BUCKET}/todos/{TODO}.json"
-        self.stub.fail_get[get] = {"ok": False, "error": "timed out", "code": "network"}
-        self.assertEqual(self.cli("complete", "--todo", REF)[0], 1)
-        self.assertTrue(self.state("pending-completions.json")[REF]["lookup"])
-        self.poll()
-        [(_, body)] = self.failed()
-        self.assertIn("its completion could not be verified", body)
-        del self.stub.fail_get[get]
-        self.poll()
-        self.assertTrue(self.stub.todo_records[str(TODO)]["completed"])
-        self.assertEqual(self.state("pending-completions.json"), {})
-
-    def test_not_found_is_dropped_only_the_second_time_in_a_row_while_its_project_reads(self):
-        get = f"/buckets/{BUCKET}/todos/{TODO}.json"
-        self.stub.fail_get[get] = {"ok": False, "error": "Resource not found", "code": "not_found"}
-        self.stub.fail_get[f"/projects/{BUCKET}.json"] = {"ok": False, "error": "forbidden", "code": "forbidden"}
-        self.cli("complete", "--todo", REF)
-        self.poll()
-        self.assertIn(REF, self.state("pending-completions.json"))  # the project did not read: maybe out of reach
-        del self.stub.fail_get[f"/projects/{BUCKET}.json"]
-        self.poll()
-        self.assertIn(REF, self.state("pending-completions.json"))
-        self.poll()
-        self.assertEqual(self.state("pending-completions.json"), {})
-
-    def test_a_run_retries_one_pending_todo_the_one_tried_least_recently(self):
-        other = TODO + 1
-        self.stub.todo_records[str(other)] = dict(self.stub.todo_records[str(TODO)], id=other)
-        self.stub.ignore_complete = True
-        self.cli("complete", "--todo", REF)
-        self.cli("complete", "--todo", f"{BUCKET}/{other}")
-        self.poll()
-        self.poll()
-        self.assertEqual(self.made("todos complete")[2:], [["todos", "complete", str(TODO)], ["todos", "complete", str(other)]])
-
-    def test_a_note_that_cannot_be_delivered_is_logged_failed_once_and_tried_again(self):
-        self.stub.ignore_complete = True
-        self.cli("complete", "--todo", REF)
-        self.stub.inbox_exit = 1
-        self.poll()
-        self.poll()
-        self.assertEqual(self.log().count(f"FAILED complete {REF}: still not completed, and the note"), 1)
-        self.stub.inbox_exit = 0
-        self.poll()
-        self.assertEqual(len(self.failed()), 1)
+    def test_a_todo_someone_else_created_in_a_decision_list_is_refused(self):
+        self.stub.todo_records[str(TODO)]["creator"] = {"id": CAPTAIN}
+        code, _ = self.cli("complete", "--todo", REF)
+        self.assertEqual(code, 1)
+        self.assertIn(f"it was created by {CAPTAIN}, not the agent's login", self.log())
+        self.assertEqual(self.made("todos complete"), [])
 
     def test_a_todo_already_completed_gets_no_write(self):
         self.stub.todo_records[str(TODO)]["completed"] = True
@@ -201,7 +111,6 @@ class Complete(Base):
         self.assertEqual(code, 1)
         self.assertIn('its to-do list 999 is not in the config\'s "decision_lists"', self.log())
         self.assertEqual(self.made("todos complete"), [])
-        self.assertEqual(self.state("pending-completions.json"), {})
 
     def test_a_tracked_todo_is_refused_for_todo_complete(self):
         self.side("todos.json", {"request-42": {"todo": TODO, "bucket": BUCKET, "request": CAPTAIN,
@@ -234,13 +143,11 @@ class Complete(Base):
         self.assertEqual(code, 1)
         self.assertIn("not posting", self.log())
         self.assertEqual(self.made("todos complete"), [])
-        self.assertIn(REF, self.state("pending-completions.json"))
 
     def test_dry_run_writes_nothing(self):
         code, _ = self.cli("complete", "--todo", REF, "--dry-run")
         self.assertEqual(code, 0)
         self.assertEqual(self.made("todos complete"), [])
-        self.assertFalse(os.path.exists(os.path.join(self.cfgdir, "pending-completions.json")))
 
 
 class TodoCompleteReadBack(Base):
@@ -412,7 +319,7 @@ class ReplyReadBack(Base):
             s.remove_eyes(1)
         self.assertIn("still shows 👀 boost 5", str(e.exception))
 
-    def test_a_reply_that_posted_but_left_the_read_boost_is_finished_by_running_it_again(self):
+    def test_a_reply_run_again_posts_nothing_removes_nothing_and_reports_a_read_boost_left(self):
         self.stub.boosts["1"] = [{"id": 5, "booster": {"id": ACTING}, "content": "👀"}]
         real = self.stub.__call__
 
@@ -425,12 +332,17 @@ class ReplyReadBack(Base):
         with self.assertRaises(RuntimeError):
             s.reply(1, "Yes.")
         self.assertEqual(self.state("chats.json")["77"]["replied"], [1])
-        self.assertEqual(len(self.stub.chat_posts()), 1)
-        self.assertFalse(self.sync().reply(1, "Yes."))  # posts nothing
-        self.assertEqual(len(self.stub.chat_posts()), 1)
-        self.assertEqual(self.stub.boosts["1"], [])
+        deletes = len(self.stub.deletes())
+        with self.assertRaises(RuntimeError) as e:
+            self.sync().reply(1, "Yes.")
+        self.assertIn("already replied, but Basecamp still shows 👀 boost 5", str(e.exception))
+        self.assertEqual(len(self.stub.chat_posts()), 1)  # nothing posted again
+        self.assertEqual(len(self.stub.deletes()), deletes)  # nothing removed
+        self.stub.boosts["1"] = []
+        self.assertFalse(self.sync().reply(1, "Yes."))
+        self.assertIn("Basecamp shows no 👀 left on it", self.log())
 
-    def test_a_retried_boost_reply_never_removes_its_answer(self):
+    def test_a_retried_boost_reply_leaves_its_answer_and_reports_success(self):
         # Answered with the read boost itself: kept as the answer, then the reply is run again.
         self.stub.boosts["1"] = [{"id": 5, "booster": {"id": ACTING}, "content": "👀"}]
         self.assertTrue(self.sync().reply(1, boost="👀"))
@@ -438,22 +350,6 @@ class ReplyReadBack(Base):
         self.assertFalse(self.sync().reply(1, boost="👀"))
         self.assertEqual([b["id"] for b in self.stub.boosts["1"]], [5])
         self.assertEqual(self.stub.deletes(), [])
-
-    def test_an_older_reply_without_its_answer_kept_leaves_a_boost_given_as_the_answer(self):
-        self.stub.boosts["1"] = [{"id": 5, "booster": {"id": ACTING}, "content": "👀"}]
-        self.side("chats.json", {"77": {"lines": [1], "replied": [1]}})
-        self.assertFalse(self.sync().reply(1, boost="👀"))
-        self.assertEqual(self.stub.deletes(), [])
-
-    def test_a_retried_reply_whose_login_may_not_post_fails_non_zero(self):
-        self.side("chats.json", {"77": {"lines": [1], "replied": [1]}})
-        self.cfg(drop=("profile",))
-        out = io.StringIO()
-        with redirect_stdout(out):
-            code = sync.cli(["reply", "--recording", "1", "--body-file", __file__, "--home", self.home, "--config",
-                             os.path.join(self.cfgdir, "config.json")], runner=self.stub)
-        self.assertEqual(code, 1)
-        self.assertIn("the login may not post, so the read boost was not checked", self.log())
 
     def test_a_read_boost_removed_is_read_back_once(self):
         self.stub.boosts["1"] = [{"id": 5, "booster": {"id": ACTING}, "content": "👀"}]
