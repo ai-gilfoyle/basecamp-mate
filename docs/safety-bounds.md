@@ -29,8 +29,9 @@
   back the subtask it completes, and the to-do too when that subtask was the last open one,
   so its exit 0 says the subtask is completed, and the to-do only when it was due to
   complete. All three also exit 1 when they completed nothing (a refused login, a closed
-  request, a request no longer active and assigned to the agent, a decision with no step
-  of its own), except in a dry run. These commands do not retry a failed completion: the
+  request, a request no longer active and assigned to the agent, a request whose due date
+  or rule in Basecamp the sync has not read yet, such as its next occurrence, a decision
+  with no step of its own), except in a dry run. These commands do not retry a failed completion: the
   agent runs the command again. `reply` fails when Basecamp answers its post or boost
   without an id, or gives no answer at all; the post may exist then, so check Basecamp
   before running it again. `reply` and `dismiss` read the boosts back after taking the
@@ -209,11 +210,10 @@
   id>` also completes a to-do the agent's login created in a to-do list the config's
   `decision_lists` names (in any project), and refuses any other to-do before it writes.
   A to-do `todos.json` tracks passes the same creator and list checks (for example a
-  decision to-do `decide` added a step to); `complete` refuses any to-do while Basecamp lists
-  one of its subtasks open (read live, not from `todos.json`), and and records its open entry completed in `todos.json` once
-  Basecamp shows the to-do completed. A tracked to-do outside these lists keeps `todo
-  complete`. To-dos are never
-  deleted, trashed or archived. All of these post nothing with no profile or a profile
+  decision to-do `decide` added a step to); `complete` refuses any to-do while Basecamp
+  lists one of its subtasks open (read live, not from `todos.json`), and records its open
+  entry completed in `todos.json` once Basecamp shows the to-do completed. A tracked to-do
+  outside these lists keeps `todo complete`. To-dos are never deleted, trashed or archived. All of these post nothing with no profile or a profile
   signed in as the owner, and `--dry-run` only logs.
 - Reports: with `message_board` set,
   `sync.py post-message --home <home> --config <config.json> --subject <text> --body-file <file>`

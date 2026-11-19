@@ -50,7 +50,8 @@ or by hand from
   of them that the agent's login created. A tracked one that passes these checks (for
   example a decision to-do `decide` added a step to) is also recorded completed in
   `todos.json`. While Basecamp lists one of a to-do's subtasks open, `complete` refuses it
-  and names that subtask by its title and Basecamp id, even when the to-do is already completed. A tracked to-do outside these lists uses `todo complete`. Absent or empty,
+  and names that subtask by its title and Basecamp id, even when the to-do is already
+  completed. A tracked to-do outside these lists uses `todo complete`. Absent or empty,
   `complete` refuses every to-do.
 - `message_board` (optional): the message board id `sync.py post-message` posts on; the
   owner's boosts on the agent's messages there are relayed.
