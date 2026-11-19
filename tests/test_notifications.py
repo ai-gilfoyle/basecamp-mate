@@ -706,6 +706,13 @@ class Upgrade(NotifBase):
         self.assertEqual(self.log().count('"listen" in the config is ignored'), 1)
         self.assertIn("re-run init (or basecamp-mate setup) to remove the listener service", self.log())
 
+    def test_a_removed_decision_autocomplete_key_runs_with_one_note(self):
+        self.cfg(decision_autocomplete={"source": "http://mate.example"})
+        self.assertNotIn("decision-autocomplete", self.sync().behaviors)
+        self.poll()
+        self.poll()
+        self.assertEqual(self.log().count('"decision_autocomplete" in the config is ignored'), 1)
+
     def test_its_unmonitored_false_still_applies(self):
         self.cfg(listen={"unmonitored": False})
         self.assertFalse(self.sync().behaviors["notifications"].unmonitored)

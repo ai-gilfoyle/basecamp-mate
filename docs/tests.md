@@ -48,13 +48,6 @@ dated request (`ask` until its list has an answer), the list's remembered answer
 over the remembered default, the recurring default, nothing on an undated request or
 without `schedule`, an edit and `todo show` carrying it, `sync.py schedule set|show` and
 `init`'s new-home default;
-`tests/test_decision_autocomplete.py` covers `decision_autocomplete` with mate's
-`/api/decisions` (curl) stubbed: a closed decision's to-do commented on with the recorded
-answer and completed once, an open decision, an unreadable source (logged once), a home
-mate did not read, a to-do with no link or two, an already completed one, one completed in
-Basecamp meanwhile, a not_found to-do, requests, `decide` records and adopted to-dos (marked,
-or from before the marker) never touched, one with an unanswered subtask waiting for it, a failed
-completion retried without a second comment, a dry run, a card, the timer and the config check;
 `tests/test_decision_steps.py` covers `sync.py decide`: a comment and a step assigned to the
 captain, tracked from then on, the captain's comment there relayed with `on`, their checking
 the step recorded once (the agent's own never), the to-do or card itself never completed, a

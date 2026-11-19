@@ -44,11 +44,6 @@ or by hand from
   go elsewhere with `todo create --project`, `--list` or `--card-table --column` (a card);
   its comments, boosts, replies and completion then happen in that project, and its
   notifications are this home's.
-- `decision_autocomplete` (optional, needs `todos`): `{"source": "<mate base URL>"}`, e.g.
-  `{"source": "http://127.0.0.1:3300"}`: complete each decision to-do whose body links to
-  its decision in mate (`…/#/decision/<home>/<task>`) once mate's `GET <source>/api/decisions`
-  no longer lists that decision as open, with one "Answered in mate" comment first. Off when
-  absent. See [Safety bounds](safety-bounds.md).
 - `message_board` (optional): the message board id `sync.py post-message` posts on; the
   owner's boosts on the agent's messages there are relayed.
 - `timezone` (optional): an IANA zone name (like `America/Chicago`) for the times the sync
@@ -146,8 +141,7 @@ claim, in `~/.local/state/basecamp-mate/runs/`; see [One home per project and lo
 | `sync.lock` | the script | the shared state lock held by a timer run or a command |
 | `participants.json` | the script | the project's non-client person ids, as last read for `"participants": {"project": true}` |
 | `companies.json` | the script | person id -> their company id, as last read for `"participants": {"company"}` |
-| `todos.json` | the script | to-do key -> to-do id, title, URL, created and completed times, comment cursor, owner comments recorded, acknowledgement boosts queued and done, comments replied to; for a to-do request (`request-<id>`), also who assigned it (`request`), how many times it was assigned (`requests`), a digest of its name and description, the project it is in (`bucket`, `project_name`), and why it closed (`closed`); for one adopted with `todo track`, `adopted`; with `decision_autocomplete`, the decision link read from its body (`decision`, null when none), the "Answered in mate" comment posted (`decision_comment`) and when it was found already settled in Basecamp (`decision_settled`) |
-| `decision-autocomplete.json` | the script | the last problem `decision_autocomplete` logged (an unreadable source, a home mate did not read), so a lasting one is logged once |
+| `todos.json` | the script | to-do key -> to-do id, title, URL, created and completed times, comment cursor, owner comments recorded, acknowledgement boosts queued and done, comments replied to; for a to-do request (`request-<id>`), also who assigned it (`request`), how many times it was assigned (`requests`), a digest of its name and description, the project it is in (`bucket`, `project_name`), and why it closed (`closed`) |
 | `assigned-todos.json` | the script | `ignored`: to-dos assigned to the acting login whose creator is not listened to, so the sweep fetches each once |
 | `sync.log` | the script | one line per action, plus a counts line per run |
 | `pending-comments.jsonl` | the script | captain comments and approvals waiting to be relayed, one JSON record per line (see [Pending records](records.md)) |

@@ -147,10 +147,7 @@ on it (relaying first if this is not the main firstmate's home), then
 `sync.py todo complete --todo <key>`. Feedback that is not a decision: act on it and
 answer with `sync.py reply --recording <comment id>`; the to-do stays open. Complete a
 to-do settled another way (the captain merged the PR themselves). Adopt one made by hand with
-`sync.py todo track --key <key> --todo <id>`. With `decision_autocomplete` on, a to-do whose
-description carries the decision's mate link (`…/#/decision/<home>/<task>`) completes itself,
-with an "Answered in mate" comment, once mate no longer lists that decision as open; a to-do
-without the link is still yours to complete.
+`sync.py todo track --key <key> --todo <id>`.
 
 ## To-do requests
 

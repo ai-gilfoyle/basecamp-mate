@@ -67,7 +67,7 @@ agent's side of each is in [`prompts/base.md`](../prompts/base.md).
 
 The timer runs `run.sh` every 30 seconds, and each behavior's step runs when it is due
 (`timer.json` keeps when each last ran): `notifications` and `inbox-delivery` every run;
-`card-mirror`, `release-announcements`, `checkin-answering`, `decision-autocomplete`, `assigned-todos`, `assigned-cards` and
+`card-mirror`, `release-announcements`, `checkin-answering`, `assigned-todos`, `assigned-cards` and
 `assigned-steps` every 5 minutes; `security-advisories` and `timesheet` hourly; `backup` daily; and `chat-inbox`, `chat-watch`, `decision-todos`, `reports` and
 `pings` hourly, as the repair sweep behind `notifications`, which reads their surfaces as soon as something changes.
 Without `notifications` (no `profile`, or `"notifications": false`) those five run every
@@ -84,7 +84,6 @@ Without `notifications` (no `profile`, or `"notifications": false`) those five r
 | `security-advisories` | `advisories` | `--advisories <owner/name>` (repeatable) | record each new GitHub security advisory and each new or reopened open Dependabot alert once (hourly) | route an advisory to the repo's owner, with severity, fix and disclosure decisions going to the captain; file a to-do for a Dependabot alert and route its fix the same day |
 | `checkin-answering` | `checkins` | `--checkins <time zone>` | check-in reader (5 min) | `answer` |
 | `decision-todos` | `todos` | `--todos` | to-do comment reader (hourly sweep) | `todo create`, `reply`/`todo comment`, `todo complete` |
-| `decision-autocomplete` | `decision_autocomplete` (needs `todos`) | by hand | comment "Answered in mate" on, and complete, each decision to-do whose linked decision mate no longer lists as open (5 min) | put the decision's mate link in the to-do body |
 | `assigned-todos` | `assigned_todos` | `--assigned-todos` (`--assigned-todos-anywhere`: account-wide) | to-do request readers, then the to-do comment reader for the requests (5 min) | take each request on; `todo comment`/`reply`; `todo complete` when done |
 | `assigned-cards` | `assigned_cards` | `--assigned-cards` | the to-do request readers for cards assigned to the agent, then the to-do comment reader for those requests (5 min) | as `assigned-todos`; `todo complete` moves the card to Done |
 | `assigned-steps` | `assigned_steps` | `--assigned-steps` | the to-do request readers for card steps assigned to the agent, then the comments on their cards that concern the agent (5 min) | as `assigned-todos`; `todo comment` comments on the card; `todo complete` checks the step off |
