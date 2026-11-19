@@ -24,13 +24,21 @@
   a FAILED line in `sync.log`. `todo complete`, `todo subtask` and `complete` read the to-do
   (card, step, subtask) back and fail while Basecamp still shows it open, recording
   nothing; they also exit 1 when they completed nothing (a refused login, a closed
-  request), except in a dry run. A `complete` that fails is retried by every timer run
-  (`pending-completions.json`) until Basecamp shows the to-do completed; the first retry
-  that fails too tells the agent once (a `completion-failed` record). `reply` fails when
-  Basecamp answers its post or boost without an id, and `reply` and `dismiss` read the
-  boosts back after taking the read boost off and fail while one is still there. A
-  `reply` that posted and then failed has recorded its answer: running it again posts
-  nothing and only takes the read boost off and reads it back.
+  request, a request no longer active and assigned to the agent, a decision with no step
+  of its own), except in a dry run. `complete` keeps the to-do in
+  `pending-completions.json` before it first reads it, and the timer retries one such
+  to-do per run, after the behaviors, until Basecamp shows it completed (or it is refused,
+  or not found twice while its project reads). The first retry that fails too tells the
+  agent once with a `completion-failed` note delivered straight to its firstmate inbox
+  (`bin/fm-inbox.sh` in the `--home`, or `inbox` `fm_home`), even with `inbox` off; a home
+  without one logs a FAILED line instead. `reply` fails when Basecamp answers its post or
+  boost without an id (it may be posted: check Basecamp before running it again), and
+  `reply` and `dismiss` read the boosts back after taking the read boost off and fail
+  while one is still there. A `reply` that posted and then failed has recorded its
+  answer: running it again posts nothing and only takes the read boost off and reads it
+  back, never removing the boost that answered (kept in `answers`; for an older reply, any
+  read boost when the answer given again is the read boost itself), and fails when the
+  login may not post.
 - Cards are never deleted, trashed or archived. Cards whose task left the backlog are
   left as they are (the run logs how many).
 - The sync never posts as a comment, and never to chat, except the opt-in session alert

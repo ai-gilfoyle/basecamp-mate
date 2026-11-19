@@ -231,11 +231,12 @@ defaults: what the sync enforces is changed in the config, and only when the cap
 - Once you have acted on the answer to a decision to-do, complete it: `todo complete` (or
   `todo subtask`) when `todos.json` tracks it, else `complete --todo <bucket>/<to-do id>`.
 - A command that exits non-zero logs a FAILED line naming the call. Never report its work
-  done. Part of it may have happened: a `reply` can post and then fail to take the read
-  boost off. Fix the cause and run the same command again: a `reply` already posted then
-  posts nothing and only takes the read boost off. `todo complete`, `todo subtask` and
+  done. Part of it may have happened. If the line says Basecamp answered without an id, the
+  post may exist: look in Basecamp first, and run the command again only if it is not there.
+  Otherwise fix the cause and run the same command again: a `reply` that posted and then
+  failed to take the read boost off posts nothing the second time and only takes it off. `todo complete`, `todo subtask` and
   `complete` read the to-do back, so exit 0 means Basecamp shows it completed; a failed
-  `complete` is also retried by the timer, which tells you once if it fails again.
+  `complete` is also retried by the timer, which tells you once in your inbox if it fails again.
 - You are never the captain: every command refuses to post when the login is unset or
   signs in as the captain. If that happens, fix the login; never work around it.
 - The timer's automatic posts are a release announcement, only when the captain turned

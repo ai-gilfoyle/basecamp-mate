@@ -131,8 +131,8 @@ class Sync(Tools):
         """One run: each behavior that is on, in order; a behavior left out of the config makes no calls.
 
         With `due` (the timer's run), only the behaviors whose cadence has passed since
-        they last ran (timer.json); otherwise all of them. Every run first retries the decision to-dos `complete` failed
-        to complete (retry_completions). The card mirror's slot logs
+        they last ran (timer.json); otherwise all of them. Every run then retries one decision to-do `complete` failed to
+        complete (retry_completions), after the behaviors so they keep their time. The card mirror's slot logs
         "cards off" when it is off, so sync.log shows the timer alive every 5 minutes. It
         holds the shared state lock throughout, so a command waits for it.
         """
@@ -150,7 +150,6 @@ class Sync(Tools):
                 self.log('"decision_autocomplete" in the config is ignored: basecamp-mate no longer completes decision '
                          "to-dos from the decisions app; remove the key")
                 timer["decision_autocomplete_noted"] = True
-            self.retry_completions()
             now = datetime.now(timezone.utc)
             for b in self.behaviors.values():
                 if not b.timer or (not b.on and b is not self.card_mirror):
@@ -168,6 +167,7 @@ class Sync(Tools):
                     self.save_json("timer.json", timer)
             if not self.dry:
                 self.save_json("timer.json", timer)
+            self.retry_completions()
         return plan
 
     def watch(self, url, after_line=None, until=None):
