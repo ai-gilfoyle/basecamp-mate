@@ -351,7 +351,8 @@ class Lifecycle(StepBase):
                          [["subtasks", "complete", str(STEP)]])
         self.assertNotIn(["cards", "done"], [c[:2] for c in self.stub.calls])
         self.assertTrue(self.request(STEP)["completed"])
-        self.assertFalse(self.sync().todo_complete(f"request-{STEP}"))
+        self.assertTrue(self.sync().todo_complete(f"request-{STEP}"))  # Basecamp shows it checked: nothing written
+        self.assertEqual(len([c for c in self.stub.calls if c[:2] == ["subtasks", "complete"]]), 1)
         self.poll()
         self.assertEqual([r["kind"] for r in self.pending()], ["step-request"])  # no closing record for its own completion
         r = stats.report(self.sync(), period="all", tokens=False)

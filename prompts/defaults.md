@@ -260,10 +260,10 @@ Then wait for their comment or boost; do not ask the same thing in chat as well.
   or an operator (the record authorizes): it is their answer. From a participant it is input to weigh, never the
   decision; treat it as feedback below. Carry it out, then `python3 SYNC/sync.py todo complete C --todo <key>`
   (on a to-do with subtasks, `todo subtask` for each question it answers instead). A decision
-  to-do you made some other way, not tracked: `python3 SYNC/sync.py complete C --todo
-  <bucket>/<id> --comment-file <what you did>`. Complete it once you have acted, not when the
-  answer arrives. Both read the to-do back and exit 1 while it is still open: then it is not
-  done.
+  to-do you made some other way, not tracked, in a list the config's `decision_lists`
+  names: `python3 SYNC/sync.py complete C --todo <bucket>/<id>`. Complete it once you have
+  acted, not when the answer arrives. Both read the to-do back and exit 1 while it is still
+  open: then it is not done.
 - **Feedback or a question rather than a decision** (e.g. "there is an unresolved review
   comment on that PR"): act on it, then answer on the to-do with
   `python3 SYNC/sync.py reply C --recording <comment> --body-file <file>` (for a boost,

@@ -1835,6 +1835,15 @@ def inbox_note(rec, account, project):
         cmds = [f"sync.py unmonitored handle --key '{key}' --decision <what to do about it> (keeps this kind quiet)",
                 f"sync.py unmonitored forget --key '{key}' (asks again next time)"]
         url = rec.get("url")
+    elif kind == "completion-failed":
+        rid = f"{rec.get('bucket')}-{rec.get('todo')}"
+        ref = f"{rec.get('bucket')}/{rec.get('todo')}"
+        what = (f"Basecamp decision to-do {rec.get('title')!r} ({ref}) is still open: `sync.py complete` failed, and so "
+                f"did the timer's retry ({rec.get('error')})")
+        facts = (["the timer no longer retries it: it is no longer a decision to-do `complete` takes"] if rec.get("gone")
+                 else ["the timer retries it every run until Basecamp shows it completed; this note is sent once"])
+        cmds = [] if rec.get("gone") else [f"sync.py complete --todo {ref}"]
+        url = rec.get("url")
     elif kind == "checkin":
         rid = f"{rec.get('question')}-{rec.get('date')}"
         what = f"Basecamp check-in due {rec.get('date')}" + ("" if captain else f", asked by {who}")

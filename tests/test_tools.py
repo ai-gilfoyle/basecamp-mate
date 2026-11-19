@@ -20,6 +20,7 @@ class TodoStub(Stub):
         super().__init__()
         self.inputs, self.todo_records, self.fail_create = [], {}, False
         self.card_records = {}  # card id -> its record, for the cards `cards create` made here (`cards done` completes one)
+        self.subtasks_done = set()  # the subtask ids `subtasks complete` completed, as `subtasks show` reads them back
         self.notes, self.note_ids, self.inbox_exit = [], {}, 0  # fm-inbox.sh notes (request id, body, FM_HOME)
 
     def __call__(self, cmd, **kw):
@@ -38,7 +39,7 @@ class TodoStub(Stub):
         if cmd[0] == "basecamp":
             args = cmd[3:-3]
             core = args[2:] if args[:1] == ["-P"] else args
-            mine = (core[:2] in (["todos", "create"], ["todos", "complete"], ["subtasks", "create"], ["subtasks", "complete"], ["comments", "create"], ["messages", "create"])
+            mine = (core[:2] in (["todos", "create"], ["todos", "complete"], ["subtasks", "create"], ["subtasks", "complete"], ["subtasks", "show"], ["comments", "create"], ["messages", "create"])
                     or (core[:2] == ["api", "get"] and "/todos/" in core[2]))
             if core[:2] == ["cards", "create"]:
                 out = super().__call__(cmd, **kw)
@@ -75,7 +76,10 @@ class TodoStub(Stub):
         if core[:2] == ["subtasks", "create"]:
             return {"ok": True, "data": {"id": self.next_id, "title": core[3], "completed": False}}
         if core[:2] == ["subtasks", "complete"]:
+            self.subtasks_done.add(core[2])
             return {"ok": True, "data": None}
+        if core[:2] == ["subtasks", "show"]:
+            return {"ok": True, "data": {"id": int(core[2]), "completed": core[2] in self.subtasks_done}}
         if core[:2] == ["todos", "complete"]:
             self.todo_records[core[2]]["completed"] = True
             return {"ok": True, "data": None}
@@ -190,7 +194,8 @@ class TodoSubtasks(ToolBase):
         self.assertTrue(self.sync().todo_subtask("ta-x", 2))
         self.assertEqual(self.stub.made("subtasks complete"), [["subtasks", "complete", str(tid + 2)]])
         self.assertEqual(self.stub.made("todos complete"), [])
-        self.assertFalse(self.sync().todo_subtask("ta-x", 2))  # already done
+        self.assertTrue(self.sync().todo_subtask("ta-x", 2))  # already done: not completed again
+        self.assertEqual(len(self.stub.made("subtasks complete")), 1)
         self.assertTrue(self.sync().todo_subtask(str(tid), 1))
         self.assertEqual(self.stub.made("subtasks complete")[-1], ["subtasks", "complete", str(tid + 1)])
         self.assertEqual(self.stub.made("todos complete"), [["todos", "complete", str(tid)]])
@@ -280,7 +285,8 @@ class TodoComments(ToolBase):
     def test_completed_todo_is_no_longer_read(self):
         self.assertTrue(self.sync().todo_complete("ta-x"))
         self.assertEqual(self.stub.made("todos complete"), [["todos", "complete", self.c]])
-        self.assertFalse(self.sync().todo_complete(self.c))  # by id; already completed
+        self.assertTrue(self.sync().todo_complete(self.c))  # by id; Basecamp shows it completed: nothing written
+        self.assertEqual(len(self.stub.made("todos complete")), 1)
         self.stub.comments[self.c] = [comment(1)]
         self.poll()
         self.assertEqual(self.pending(), [])

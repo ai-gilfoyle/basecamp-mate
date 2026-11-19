@@ -62,7 +62,7 @@ the same project (or Pings, account-wide to-do requests or account-wide mentions
 Usage: sync.py --home <home> --config <config.json> [--all] [--dry-run] [--include-prereleases] [--allow-duplicate]
        sync.py status      (the runs recorded on this computer; also bin/basecamp-mate status)
        sync.py reply --home <home> --config <config.json> --recording <comment, chat line or Ping line id> (--body-file <file> | --boost <text>) [--again] [--awaiting] [--dry-run]
-       sync.py complete --home <home> --config <config.json> --todo <bucket>/<id> | <to-do URL> | <id> [--comment-file <file>] [--dry-run]
+       sync.py complete --home <home> --config <config.json> --todo <bucket>/<to-do id> [--dry-run]
        sync.py dismiss --home <home> --config <config.json> --recording <id> [--reason <text>] [--dry-run]
        sync.py stats --home <home> --config <config.json> [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--by day|week|month|all] [--transcripts <dir>]... [--no-tokens] [--json]
        sync.py watch --home <home> --config <config.json> --chat <chat URL> [--after-line <line id>] [--until YYYY-MM-DD] [--dry-run]
@@ -131,7 +131,8 @@ class Sync(Tools):
         """One run: each behavior that is on, in order; a behavior left out of the config makes no calls.
 
         With `due` (the timer's run), only the behaviors whose cadence has passed since
-        they last ran (timer.json); otherwise all of them. The card mirror's slot logs
+        they last ran (timer.json); otherwise all of them. Every run first retries the decision to-dos `complete` failed
+        to complete (retry_completions). The card mirror's slot logs
         "cards off" when it is off, so sync.log shows the timer alive every 5 minutes. It
         holds the shared state lock throughout, so a command waits for it.
         """
@@ -149,6 +150,7 @@ class Sync(Tools):
                 self.log('"decision_autocomplete" in the config is ignored: basecamp-mate no longer completes decision '
                          "to-dos from the decisions app; remove the key")
                 timer["decision_autocomplete_noted"] = True
+            self.retry_completions()
             now = datetime.now(timezone.utc)
             for b in self.behaviors.values():
                 if not b.timer or (not b.on and b is not self.card_mirror):
@@ -344,6 +346,13 @@ def command(a, what, call, runner, guard=False):
     return 0
 
 
+def completed(s, what, done):
+    """The outcome of a completion command: raise (so it exits 1 with a FAILED line) unless `done`, Basecamp read back
+    showing it completed; a dry run, which completes nothing, passes."""
+    if not done and not s.dry:
+        raise RuntimeError(f"{what}: not completed in Basecamp (sync.log says why)")
+
+
 def todo_cli(argv, runner):
     sub = argv[:1][0] if argv else None
     descs = {"create": "Create a to-do assigned to the owner and track it under a key.",
@@ -386,8 +395,8 @@ def todo_cli(argv, runner):
                                                a.project, card),
              "track": lambda s: s.todo_track(a.key, a.todo, a.project),
              "comment": lambda s: s.todo_comment(a.todo, read(a.body_file)),
-             "complete": lambda s: s.todo_complete(a.todo),
-             "subtask": lambda s: s.todo_subtask(a.todo, a.number),
+             "complete": lambda s: completed(s, f"todo complete {a.todo}", s.todo_complete(a.todo)),
+             "subtask": lambda s: completed(s, f"todo subtask {a.todo} {a.number}", s.todo_subtask(a.todo, a.number)),
              "show": lambda s: s.todo_show(a.todo)}
     return command(a, f"todo {sub}", calls[sub], runner, guard=sub != "show")
 
@@ -476,15 +485,13 @@ def cli(argv=None, runner=subprocess.run):
             a.recording, None if a.boost is not None else read(a.body_file), again=a.again, boost=a.boost,
             awaiting=a.awaiting), runner, guard=True)
     if argv[:1] == ["complete"]:
-        ap = common("sync.py complete", "Complete a to-do the sync tracks or the agent's login created, in any project, "
-                                        "and verify it: post the comment first when given, complete it, then read it "
-                                        "back; exits 1 with a FAILED line unless Basecamp shows it completed.")
-        ap.add_argument("--todo", required=True, help="<bucket>/<to-do id>, the to-do's Basecamp URL, or its id in the "
-                                                      "configured project")
-        ap.add_argument("--comment-file", help="a comment to post on it first, Markdown (posted once, even when retried)")
+        ap = common("sync.py complete", 'Complete a decision to-do, one in a to-do list the config\'s "decision_lists" '
+                                        "names, in any project, and verify it: complete it, then read it back; exits 1 "
+                                        "with a FAILED line unless Basecamp shows it completed (the timer then retries it).")
+        ap.add_argument("--todo", required=True, help="<bucket>/<to-do id>")
         ap.add_argument("--dry-run", action="store_true")
         a = ap.parse_args(argv[1:])
-        return command(a, f"complete {a.todo}", lambda s: s.complete(a.todo, read(a.comment_file) if a.comment_file else None),
+        return command(a, f"complete {a.todo}", lambda s: completed(s, f"complete {a.todo}", s.complete(a.todo)),
                        runner, guard=True)
     if argv[:1] == ["dismiss"]:
         ap = common("sync.py dismiss", "Say a relayed item was not for the agent: take the read boost (👀) off it and "

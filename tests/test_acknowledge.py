@@ -63,7 +63,7 @@ class Decided(NotifBase):
         self.assertNotIn(("10", THUMBS), self.stub.posted())  # a participant's word decides nothing
         self.assertEqual(len(self.stub.deletes()), 1)  # the 👀 on 9
         posted = len(self.stub.posted())
-        self.assertFalse(self.sync().todo_complete("ta-x"))
+        self.assertTrue(self.sync().todo_complete("ta-x"))  # Basecamp shows it completed: nothing written
         self.assertEqual(len(self.stub.posted()), posted)
 
     def test_answering_one_step_acknowledges_what_decided_it(self):

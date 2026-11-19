@@ -61,6 +61,7 @@ BLOCKED_REPLY = "Sorry, I can't act on this: I only take requests from the peopl
 TRUNCATED = re.compile(r"Showing (\d+) of (\d+) results")
 
 # Logged once when a request's to-do, card or step refetch answers not_found: final for that record, never retried.
+PENDING_COMPLETIONS = "pending-completions.json"  # decision to-dos `sync.py complete` failed to complete, retried each run
 NOT_FOUND = "not found (deleted, or out of this login's reach)"
 
 
@@ -152,6 +153,11 @@ class Tools:
         self.ask_chat = str(cfg["ask_chat"]) if cfg.get("ask_chat") is not None else None
         self.checkins = cfg.get("checkins")
         self.todos = cfg.get("todos")
+        # "decision_lists": the to-do lists whose to-dos `sync.py complete` may complete (the agent's decision to-dos).
+        lists = cfg.get("decision_lists", [])
+        if not isinstance(lists, list) or not all(str(x).isdigit() for x in lists):
+            raise ValueError('config "decision_lists" must be a list of to-do list ids')
+        self.decision_lists = {str(x) for x in lists}
         self.assigned_todos = cfg.get("assigned_todos") not in (None, False)
         # "account": to-dos assigned to the acting user in any project of the account are requests; else this project's.
         self.assigned_scope = (cfg.get("assigned_todos") or {}).get("scope", "project") \
@@ -1546,7 +1552,10 @@ class Tools:
         """To-do `tid` in `bucket` (default the project), refetched: content (its name), description, assignees, creator,
         completed, completion, status, due_on, repetition_schedule, its parent (list) and the bucket (project) it is in.
         `what` "card": card `tid` instead, in the same shape (its title as content, its content as description); "step":
-        card step `tid` (a Kanban::Step: its title as content, no description, the card it is on as parent)."""
+        card step `tid` (a Kanban::Step: its title as content, no description, the card it is on as parent); "subtask": a
+        to-do's native subtask `tid`."""
+        if what == "subtask":
+            return self.bc("subtasks", "show", str(tid), project=bucket) or {}
         if what == "card":
             c = self.bc("api", "get", f"/buckets/{bucket or self.project}/card_tables/cards/{tid}.json", project=bucket) or {}
             return dict(c, content=c.get("title"), description=c.get("content"))
@@ -2335,8 +2344,7 @@ class Tools:
             target = f"/buckets/{self.project}/recordings/{rec['card']}/comments.json"
         where = f"chat {chat}" if chat is not None else f"card {rec['card']}"
         if rid in rec.get("replied", []) and not again:
-            self.log(f"reply {rid}: already replied, pass --again to post another")
-            return False
+            return self.reply_again(rid, bucket)
         if self.refused(f"reply {rid}"):
             return False
         if self.dry:
@@ -2358,8 +2366,7 @@ class Tools:
         """Answer the owner's line `rid` in Ping chat `chat` with a new line there, in the Ping's own bucket."""
         rec = self.load("pings.json", {})["pings"][chat]
         if rid in rec.get("replied", []) and not again:
-            self.log(f"reply {rid}: already replied, pass --again to post another")
-            return False
+            return self.reply_again(rid, rec["bucket"])
         if self.refused(f"reply {rid}"):
             return False
         bucket = rec["bucket"]
@@ -2380,9 +2387,8 @@ class Tools:
     def reply_todo(self, key, rid, text, again, boost=None):
         with self.locked("todos.json"):
             rec = self.load("todos.json", {})[key]
-            if rid in rec.get("replied", []) and not again:
-                self.log(f"reply {rid}: already replied, pass --again to post another")
-                return False
+        if rid in rec.get("replied", []) and not again:
+            return self.reply_again(rid, rec.get("bucket"))
         if self.refused(f"reply {rid}"):
             return False
         if self.dry:
@@ -2402,8 +2408,7 @@ class Tools:
         with self.locked("messages.json"):
             rec = self.load("messages.json", {})["posts"][mid]
         if rid in rec.get("replied", []) and not again:
-            self.log(f"reply {rid}: already replied, pass --again to post another")
-            return False
+            return self.reply_again(rid, None)
         if self.refused(f"reply {rid}"):
             return False
         if self.dry:
@@ -2423,8 +2428,7 @@ class Tools:
         comment, when posted as one, and when the mark was set and ends)."""
         rec = self.load("threads.json", {})[key]
         if rid in rec.get("replied", []) and not again:
-            self.log(f"reply {rid}: already replied, pass --again to post another")
-            return False
+            return self.reply_again(rid, rec.get("bucket"))
         if self.refused(f"reply {rid}"):
             return False
         where = f"{rec.get('parent_type') or 'thread'} {rec['thread']}"
@@ -2456,6 +2460,19 @@ class Tools:
         self.save_json("threads.json", state)
         self.remove_eyes(rid, rec.get("bucket"), answer)
         return True
+
+    def reply_again(self, rid, bucket):
+        """`reply` on `rid`, already replied to, without `again`: nothing is posted, but the read boost is taken off
+        and read back (remove_eyes), so a reply that posted and then failed to take it off is finished by running it
+        again. False: nothing was posted; it raises while Basecamp still shows the read boost."""
+        self.log(f"reply {rid}: already replied, pass --again to post another; checking the read boost is off")
+        if self.refused(f"reply {rid}"):
+            return False
+        if self.dry:
+            self.log(f"dry reply {rid}: remove {EYES} if it is still there")
+            return False
+        self.remove_eyes(rid, bucket)
+        return False
 
     @staticmethod
     def reply_plan(rid, post, boost):
@@ -2912,43 +2929,43 @@ class Tools:
 
     def todo_complete(self, ref):
         """Mark a tracked to-do complete; its comments are no longer read. A card request is completed
-        by moving the card to its table's Done column (a card already done is recorded completed), and a card step
-        request by checking the step off (Basecamp's step completion; the card itself is left as it is)."""
+        by moving the card to its table's Done column, a card step request by checking the step off (Basecamp's step
+        completion; the card itself is left as it is), and a decision put on someone else's to-do or card (`decide`) by
+        checking its decision steps. Each is read back first and after its completion call: True only once Basecamp
+        shows every one completed (also when it already did, even when todos.json said so before); False, logged, when
+        nothing was completed (a closed request, a login that may not post, a dry run). A to-do recorded completed that
+        Basecamp shows open is completed again."""
         self.need_todos()
         key, rec = self.tracked(ref)
-        if rec.get("completed"):
-            self.log(f"todo complete {key}: already completed {rec['completed']}")
-            return False
+        name = f"todo complete {key}"
         if rec.get("closed"):
-            self.log(f"todo complete {key}: the request was closed ({rec['closed']}), not completing it")
+            self.log(f"{name}: the request was closed ({rec['closed']}), not completing it")
             return False
-        if self.refused(f"todo complete {key}", "owner"):
+        bucket = rec.get("bucket")
+        if rec.get("on"):  # a to-do or card that is not the agent's (decide): only its own steps are completed
+            targets = [(q["id"], "subtask") for q in rec.get("subtasks") or [] if q.get("decider")]
+        else:
+            targets = [(rec["todo"], rec.get("type") or "todo")]
+        left = [(tid, kind) for tid, kind in targets if not self.todo(tid, bucket, kind).get("completed")]
+        if not left:
+            self.log(f"{name}: already completed in Basecamp")
+            if not rec.get("completed") and not self.dry:
+                self.record_completed(key, "todo complete")
+            return True
+        if rec.get("completed"):
+            self.log(f"{name}: recorded completed {rec['completed']}, but Basecamp shows it open: completing it again")
+        if self.refused(name, "owner"):
             return False
         if self.dry:
-            self.log(f"dry todo complete {key}: complete todo {rec['todo']}")
+            self.log(f"dry {name}: complete " + ", ".join(f"{kind} {tid}" for tid, kind in left))
             return False
-        if rec.get("on"):  # a to-do or card that is not the agent's (decide): only its own open steps are completed
-            for q in rec.get("subtasks") or []:
-                if q.get("decider") and not q.get("done"):
-                    self.bc("subtasks", "complete", str(q["id"]), project=rec.get("bucket"))
-        elif rec.get("type") == "card":
-            bucket = rec.get("bucket") or self.project
-            c = self.bc("api", "get", f"/buckets/{bucket}/card_tables/cards/{rec['todo']}.json", project=bucket) or {}
-            if c.get("completed"):
-                self.log(f"todo complete {key}: card {rec['todo']} is already done in Basecamp")
-            else:
-                self.bc("cards", "done", str(rec["todo"]), project=bucket)
-                self.verify_completed(f"todo complete {key}", rec["todo"], rec.get("bucket"), "card")
-        elif rec.get("type") == "step":
-            if self.todo(rec["todo"], rec.get("bucket"), "step").get("completed"):
-                self.log(f"todo complete {key}: step {rec['todo']} is already checked in Basecamp")
-            else:
-                self.bc("subtasks", "complete", str(rec["todo"]), project=rec.get("bucket"))
-                self.verify_completed(f"todo complete {key}", rec["todo"], rec.get("bucket"), "step")
-        else:
-            self.bc("todos", "complete", str(rec["todo"]), project=rec.get("bucket"))
-            self.verify_completed(f"todo complete {key}", rec["todo"], rec.get("bucket"))
-        self.record_completed(key, "todo complete")
+        verbs = {"todo": ("todos", "complete"), "card": ("cards", "done"), "step": ("subtasks", "complete"),
+                 "subtask": ("subtasks", "complete")}
+        for tid, kind in left:
+            self.bc(*verbs[kind], str(tid), project=bucket)
+            self.verify_completed(name, tid, bucket, kind)
+        if not rec.get("completed"):
+            self.record_completed(key, "todo complete")
         return True
 
     def record_completed(self, key, what):
@@ -2963,120 +2980,132 @@ class Tools:
         self.acknowledge_decided(key)
 
     def verify_completed(self, what, tid, bucket=None, kind="todo"):
-        """Read to-do (card, step) `tid` back after completing it and raise when Basecamp does not show it completed: a
-        completion call that answered ok but changed nothing must not pass for done."""
+        """Read to-do (card, step, subtask) `tid` back after completing it and raise when Basecamp does not show it
+        completed: a completion call that answered ok but changed nothing must not pass for done."""
         got = self.todo(tid, bucket, kind)
         if not got.get("completed"):
             raise RuntimeError(f"{what}: Basecamp still shows {kind} {tid} open after the completion call "
                                f"(status {got.get('status')!r}); it was not completed")
 
-    def todo_ref(self, ref):
-        """(bucket, to-do id) of `ref`: `<bucket>/<id>`, a to-do's Basecamp URL in this account, or a bare id (the
-        configured project)."""
-        s = str(ref).strip()
-        if "basecamp" in s:
-            return parse_recording(s, self.account)
-        m = re.fullmatch(r"(?:(\d+)/)?(\d+)", s)
+    def complete(self, ref):
+        """Complete the decision to-do `ref` (`<bucket>/<to-do id>`), one in a to-do list the config's "decision_lists"
+        names (in any project of the account), and prove it: complete it, then read it back and raise unless Basecamp
+        shows it completed. Any other to-do is refused (raised) before anything is written, and so is one todos.json
+        tracks (requests and tracked decision to-dos keep `todo complete`). A to-do Basecamp already shows completed
+        gets no write. A completion that fails or that Basecamp still shows open is kept in PENDING_COMPLETIONS, which
+        every timer run retries (retry_completions); one that succeeds leaves it. True once Basecamp shows it completed;
+        False for a dry run, which reads and logs only."""
+        m = re.fullmatch(r"(\d+)/(\d+)", str(ref).strip())
         if not m:
-            raise ValueError(f"{ref!r} is not a to-do: give <bucket>/<id>, its Basecamp URL or its id")
-        return m.group(1) or str(self.project), int(m.group(2))
-
-    def complete(self, ref, comment=None, out=print):
-        """Complete a to-do (`ref`: see todo_ref) that todos.json tracks or that the agent's login created (in any project
-        of the account, such as a decision to-do made outside `todo create`), and prove it: post `comment` (Markdown) on
-        it first when given, complete it, then read it back and raise unless Basecamp shows it completed. Any other
-        to-do is refused (raised) before anything is posted.
-
-        The comment is posted once per to-do: its id is kept in completions.json, so a run retried after a failed
-        completion does not post it twice. A to-do Basecamp already shows completed gets no comment and no write (and,
-        when tracked, is recorded completed). A to-do tracked in todos.json is recorded completed as `todo complete`
-        records it; a tracked card, card step or decision step goes through `todo complete` itself. Refused like the
-        other commands when the login is not the agent; a dry run reads and logs only. Prints the outcome."""
-        bucket, tid = self.todo_ref(ref)
+            raise ValueError(f"{ref!r} is not a to-do: give <bucket>/<to-do id>")
+        bucket, tid = m.group(1), int(m.group(2))
         name = f"complete {bucket}/{tid}"
-        hit = next(((k, r) for k, r in self.load("todos.json", {}).items()
-                    if str(r.get("todo")) == str(tid) and str(r.get("bucket") or self.project) == str(bucket)), None)
-        if hit and (hit[1].get("type") in ("card", "step") or hit[1].get("on")):
-            if comment:
-                raise ValueError(f"{name}: tracked {hit[1].get('type') or 'decision step'} {hit[0]}: "
-                                 "post the comment with `todo comment`, then complete it without --comment-file")
-            done = self.todo_complete(hit[0])
-            out(f"{name}: " + ("completed and verified" if done else "nothing to do; see sync.log"))
-            return done
-        if comment is not None and not comment.strip():
-            raise ValueError(f"{name}: empty comment")
+        key = next((k for k, r in self.load("todos.json", {}).items() if str(r.get("todo")) == str(tid)), None)
+        if key is not None:
+            raise ValueError(f"{name}: todos.json tracks it as {key}: complete it with `todo complete --todo {key}`")
         todo = self.todo(tid, bucket)
-        if not hit and (todo.get("creator") or {}).get("id") != self.agent_id:
-            raise ValueError(f"{name}: not tracked in todos.json and not created by the agent's login "
-                             f"(creator {(todo.get('creator') or {}).get('id')}), so it is not the agent's to complete")
-        if todo.get("completed"):
-            self.log(f"{name}: already completed in Basecamp" + (", comment not posted" if comment else ""))
-            if hit and not hit[1].get("completed") and not self.dry:
-                self.record_completed(hit[0], "complete")
-            out(f"{name}: already completed in Basecamp")
-            return True
-        if self.refused(name, "owner"):
-            return False
-        if self.dry:
-            self.log(f"dry {name}: " + ("comment, then " if comment else "") + f"complete todo {tid} and read it back")
-            return False
-        if comment:
-            with self.locked("completions.json"):
-                posted = self.load("completions.json", {}).get(f"{bucket}/{tid}", {}).get("comment")
-            if posted:
-                self.log(f"{name}: comment {posted} already posted, not posting it again")
-            else:
-                c = self.bc("comments", "create", str(tid), "-", input=comment, project=bucket) or {}
-                if not c.get("id"):
-                    raise RuntimeError(f"{name}: Basecamp answered the comment without an id; it may not be posted")
-                with self.locked("completions.json"):
-                    state = self.load("completions.json", {})
-                    state.setdefault(f"{bucket}/{tid}", {})["comment"] = c["id"]
-                    self.save_json("completions.json", state)
-                self.log(f"{name}: comment {c['id']} on todo {tid}")
-        self.bc("todos", "complete", str(tid), project=bucket)
-        self.verify_completed(name, tid, bucket)
-        with self.locked("completions.json"):
-            state = self.load("completions.json", {})
-            state.setdefault(f"{bucket}/{tid}", {})["completed"] = now_iso()
-            self.save_json("completions.json", state)
-        if hit and not hit[1].get("completed"):
-            self.record_completed(hit[0], "complete")
-        else:
+        parent = (todo.get("parent") or {}).get("id")
+        if str(parent) not in self.decision_lists:
+            raise ValueError(f'{name}: its to-do list {parent} is not in the config\'s "decision_lists", so it is not '
+                             "the agent's to complete")
+        if not todo.get("completed"):
+            try:
+                if self.refused(name, "owner"):
+                    raise RuntimeError(f"{name}: the login may not post, so it was not completed")
+                if self.dry:
+                    self.log(f"dry {name}: complete todo {tid} and read it back")
+                    return False
+                self.bc("todos", "complete", str(tid), project=bucket)
+                self.verify_completed(name, tid, bucket)
+            except Exception as e:
+                if not self.dry:
+                    self.pend_completion(f"{bucket}/{tid}", todo, e)
+                raise
             self.log(f"{name}: completed and verified")
-        out(f"{name}: completed and verified")
+        else:
+            self.log(f"{name}: already completed in Basecamp")
+        if not self.dry:
+            with self.locked(PENDING_COMPLETIONS):
+                pending = self.load(PENDING_COMPLETIONS, {})
+                if pending.pop(f"{bucket}/{tid}", None) is not None:
+                    self.save_json(PENDING_COMPLETIONS, pending)
         return True
+
+    def pend_completion(self, ref, todo, error):
+        """Keep decision to-do `ref` (`<bucket>/<id>`, as read: `todo`) in PENDING_COMPLETIONS after a failed completion,
+        with the error; the first failure's time and whether the agent was told are kept."""
+        with self.locked(PENDING_COMPLETIONS):
+            pending = self.load(PENDING_COMPLETIONS, {})
+            pending[ref] = dict(pending.get(ref) or {"since": now_iso()}, title=todo.get("content"),
+                                url=todo.get("app_url"), error=f"{type(error).__name__}: {error}")
+            self.save_json(PENDING_COMPLETIONS, pending)
+
+    def retry_completions(self):
+        """Retry each decision to-do in PENDING_COMPLETIONS (complete). One that fails again is told to the agent once,
+        as a `completion-failed` record (the inbox note), and stays to be retried next run; one that is no longer a
+        decision to-do the command takes (refused, or not found) is told the same way and dropped. A dry run does
+        nothing."""
+        if self.dry:
+            return
+        for ref in sorted(self.load(PENDING_COMPLETIONS, {})):
+            try:
+                self.complete(ref)
+                self.log(f"complete {ref}: Basecamp shows it completed, no longer pending")
+                continue
+            except Exception as e:
+                error = e
+            gone = isinstance(error, ValueError) or getattr(error, "code", None) == "not_found"
+            with self.locked(PENDING_COMPLETIONS):
+                pending = self.load(PENDING_COMPLETIONS, {})
+                p = pending.get(ref) or {}
+                if not p.get("noted"):
+                    bucket, tid = ref.split("/")
+                    self.record({"kind": "completion-failed", "bucket": int(bucket), "todo": int(tid),
+                                 "title": p.get("title"), "url": p.get("url"), "since": p.get("since"),
+                                 "error": f"{type(error).__name__}: {error}", "gone": gone})
+                    self.log(f"complete {ref}: still not completed on retry, the agent is told: "
+                             f"{type(error).__name__}: {error}")
+                    p["noted"] = now_iso()
+                if gone:
+                    pending.pop(ref, None)
+                elif ref in pending:
+                    pending[ref] = p
+                self.save_json(PENDING_COMPLETIONS, pending)
 
     def todo_subtask(self, ref, number):
         """Complete subtask `number` (from 1) of a tracked to-do, answered, as Basecamp's native subtask (a decision step
-        `decide` added included); a decision to-do is completed once every subtask is, never a request or a to-do or card
-        the decision was only put on (that record just stops being tracked)."""
+        `decide` added included), read back before it is recorded done; a decision to-do is completed once every subtask
+        is, never a request or a to-do or card the decision was only put on (that record just stops being tracked). Run
+        again on a subtask already done, it only completes the decision to-do when that is still open (todo_complete).
+        True once Basecamp shows the subtask (and, when it was the last, the to-do) completed."""
         self.need_todos()
         key, rec = self.tracked(ref)
-        subtasks = rec.get("subtasks") or []
+        name = f"todo subtask {key} {number}"
+        subtasks = [dict(q) for q in rec.get("subtasks") or []]
         if not 1 <= number <= len(subtasks):
             raise ValueError(f"to-do {key} has no subtask {number} (it has {len(subtasks)})")
-        if subtasks[number - 1]["done"]:
-            self.log(f"todo subtask {key} {number}: already done {subtasks[number - 1]['done']}")
-            return False
-        if self.refused(f"todo subtask {key} {number}", "owner"):
-            return False
-        if self.dry:
-            self.log(f"dry todo subtask {key} {number}: complete subtask {subtasks[number - 1]['id']} on todo {rec['todo']}")
-            return False
-        subtasks = [dict(q) for q in subtasks]
-        subtasks[number - 1]["done"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        self.bc("subtasks", "complete", str(subtasks[number - 1]["id"]), project=rec.get("bucket"))
-        with self.locked("todos.json"):
-            state = self.load("todos.json", {})
-            state[key]["subtasks"] = subtasks
-            self.save_json("todos.json", state)
-        left = sum(not q["done"] for q in subtasks)
-        self.log(f"todo subtask {key} {number}: done, {left} left on todo {rec['todo']}")
-        self.ledger("answered", key=key, via="todo subtask")
-        if not left and not rec.get("request"):
-            self.todo_complete(key)
+        q = subtasks[number - 1]
+        was = q["done"]
+        if was:
+            self.log(f"{name}: already done {q['done']}")
         else:
+            if self.refused(name, "owner"):
+                return False
+            if self.dry:
+                self.log(f"dry {name}: complete subtask {q['id']} on todo {rec['todo']}")
+                return False
+            self.bc("subtasks", "complete", str(q["id"]), project=rec.get("bucket"))
+            self.verify_completed(name, q["id"], rec.get("bucket"), "subtask")
+            q["done"] = now_iso()
+            with self.locked("todos.json"):
+                state = self.load("todos.json", {})
+                state[key]["subtasks"] = subtasks
+                self.save_json("todos.json", state)
+            self.log(f"{name}: done, {sum(not s['done'] for s in subtasks)} left on todo {rec['todo']}")
+            self.ledger("answered", key=key, via="todo subtask")
+        if not any(not s["done"] for s in subtasks) and not rec.get("request"):
+            return self.todo_complete(key)
+        if not was:
             self.acknowledge_decided(key)
         return True
 
