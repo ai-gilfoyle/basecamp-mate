@@ -114,8 +114,7 @@ class Complete(Base):
 
     def test_a_tracked_todo_outside_the_decision_lists_is_refused_for_todo_complete(self):
         self.stub.todo_records[str(TODO)]["parent"] = {"id": 999, "type": "Todolist"}
-        self.side("todos.json", {"request-42": {"todo": TODO, "bucket": BUCKET, "request": CAPTAIN,
-                                                "closed": "unassigned"}})
+        self.side("todos.json", {"request-42": {"todo": TODO, "bucket": BUCKET, "request": CAPTAIN}})
         code, _ = self.cli("complete", "--todo", REF)
         self.assertEqual(code, 1)
         self.assertIn("todos.json tracks it as request-42: complete it with `todo complete --todo request-42`", self.log())
@@ -126,11 +125,33 @@ class Complete(Base):
         self.side("todos.json", {"decision-merge": {"todo": TODO, "bucket": BUCKET, "on": True,
                                                     "subtasks": [{"id": 7, "done": "2026-11-19T10:00:00Z",
                                                                   "decider": CAPTAIN}]}})
+        self.stub.subtasks_done.add("7")
         code, _ = self.cli("complete", "--todo", REF)
         self.assertEqual(code, 0, self.log())
         self.assertEqual(self.made("todos complete"), [["todos", "complete", str(TODO)]])
         self.assertTrue(self.stub.todo_records[str(TODO)]["completed"])
         self.assertIn("completed", self.state("todos.json")["decision-merge"])
+
+    def test_a_tracked_decision_todo_with_an_open_subtask_is_refused_naming_it(self):
+        self.side("todos.json", {"ta-x": {"todo": TODO, "bucket": BUCKET, "subtasks": [
+            {"text": "Merge the fix?", "done": "2026-11-19T10:00:00Z", "id": 7},
+            {"text": "Ship it today?", "done": None, "id": 8}]}})
+        self.stub.subtasks_done.add("7")
+        code, _ = self.cli("complete", "--todo", REF)
+        self.assertEqual(code, 1)
+        self.assertIn("Basecamp shows its subtask 2 ('Ship it today?') open: finish it with "
+                      "`todo subtask --todo ta-x --number 2` first", self.log())
+        self.assertEqual(self.made("todos complete"), [])
+        self.assertNotIn("completed", self.state("todos.json")["ta-x"])
+
+    def test_the_open_entry_is_recorded_when_an_older_entry_tracks_the_same_todo(self):
+        self.side("todos.json", {"a-old": {"todo": TODO, "bucket": BUCKET, "on": True, "subtasks": [],
+                                           "completed": "2026-11-18T10:00:00Z"},
+                                 "z-current": {"todo": TODO, "bucket": BUCKET, "on": True, "subtasks": []}})
+        self.assertEqual(self.cli("complete", "--todo", REF)[0], 0, self.log())
+        state = self.state("todos.json")
+        self.assertIn("completed", state["z-current"])
+        self.assertEqual(state["a-old"]["completed"], "2026-11-18T10:00:00Z")
 
     def test_a_tracked_decision_todo_left_open_fails_and_is_not_recorded(self):
         self.side("todos.json", {"decision-merge": {"todo": TODO, "bucket": BUCKET, "on": True, "subtasks": []}})
@@ -206,6 +227,15 @@ class TodoCompleteReadBack(Base):
         self.assertEqual(self.cli("todo", "complete", "--todo", "request-42")[0], 1)
         self.assertIn("no longer shows the request active and assigned to you", self.log())
         self.assertEqual(self.made("todos complete"), [])
+
+    def test_a_request_is_read_once_before_it_is_completed(self):
+        self.stub.todo_records["42"] = {"id": 42, "content": "Do it", "completed": False, "status": "active",
+                                        "assignees": [{"id": ACTING}]}
+        self.side("todos.json", {"request-42": {"todo": 42, "request": CAPTAIN}})
+        self.assertEqual(self.cli("todo", "complete", "--todo", "request-42")[0], 0, self.log())
+        write = self.stub.calls.index(["todos", "complete", "42"])
+        reads = [c for c in self.stub.calls[:write] if c[:2] == ["api", "get"] and c[2].endswith("/todos/42.json")]
+        self.assertEqual(len(reads), 1)
 
     def test_a_decision_with_no_step_of_its_own_fails_non_zero(self):
         self.side("todos.json", {"d": {"todo": 77, "on": "a to-do", "subtasks": []}})

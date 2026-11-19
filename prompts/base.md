@@ -230,7 +230,8 @@ defaults: what the sync enforces is changed in the config, and only when the cap
   recorded comment or mention, with `reply`.
 - Once you have acted on the answer to a decision to-do, complete it: `complete --todo <bucket>/<to-do id>`
   when you created it in a list `decision_lists` names (tracked or not), else `todo complete` (or
-  `todo subtask`) when `todos.json` tracks it.
+  `todo subtask`) when `todos.json` tracks it. `complete` refuses a tracked to-do while Basecamp shows
+  one of its subtasks open, and names it: finish that one with `todo subtask` first.
 - A command that exits non-zero logs a FAILED line naming the call. Never report its work
   done. Part of it may have happened. If a `reply` failed before it confirmed its post (no
   answer, a timeout, or an answer without an id), the post may exist: look in Basecamp

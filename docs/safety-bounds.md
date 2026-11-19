@@ -205,8 +205,12 @@
   and only later ones are recorded. Only tracked to-dos can be commented on with `todo`
   commands, and completed with `todo complete`. `sync.py complete --todo <bucket>/<to-do
   id>` also completes a to-do the agent's login created in a to-do list the config's
-  `decision_lists` names (its decision to-dos made outside `todo create`, in any project),
-  and refuses any other to-do, and any to-do `todos.json` tracks, before it writes. To-dos are never
+  `decision_lists` names (in any project), and refuses any other to-do before it writes.
+  A to-do `todos.json` tracks passes the same creator and list checks (for example a
+  decision to-do `decide` added a step to); `complete` also refuses it while Basecamp shows
+  one of its subtasks open, and records its open entry completed in `todos.json` once
+  Basecamp shows the to-do completed. A tracked to-do outside these lists keeps `todo
+  complete`. To-dos are never
   deleted, trashed or archived. All of these post nothing with no profile or a profile
   signed in as the owner, and `--dry-run` only logs.
 - Reports: with `message_board` set,
