@@ -118,6 +118,33 @@ class Steps(AssignBase):
         self.assertTrue(self.sync().todo_subtask("request-42", 1))
         self.assertNotIn("completed", self.todos()["request-42"])
 
+    def request_step(self):
+        """A decision step on tracked request-42, completed once and then reopened in Basecamp."""
+        self.cfg(assigned_todos={})
+        self.add(todo(42))
+        self.poll()  # request-42
+        self.stub.recordings[42] = {"id": 42, "type": "Todo", "title": "Rotate the API keys"}
+        self.decide(on="42", key=None)
+        self.assertTrue(self.sync().todo_subtask("request-42", 1))
+        self.stub.subtasks_done.clear()  # reopened in Basecamp: the step reads back open
+        return len(self.made("subtasks complete"))
+
+    def test_a_step_on_a_closed_request_is_not_completed_again(self):
+        before = self.request_step()
+        state = self.todos()
+        state["request-42"]["closed"] = "unassigned"  # as the reader records it
+        json.dump(state, open(os.path.join(self.cfgdir, "todos.json"), "w"))
+        self.assertFalse(self.sync().todo_subtask("request-42", 1))
+        self.assertEqual(len(self.made("subtasks complete")), before)
+
+    def test_a_step_on_a_request_reassigned_to_someone_else_is_not_completed_again(self):
+        before = self.request_step()
+        self.edit(42, assignees=[{"id": CAPTAIN, "name": "Caleb"}])
+        self.assertFalse(self.sync().todo_subtask("request-42", 1))
+        self.assertEqual(len(self.made("subtasks complete")), before)
+        self.assertIn("no longer shows the request active and assigned to you",
+                      open(os.path.join(self.cfgdir, "sync.log")).read())
+
     def test_an_operator_may_decide_and_no_one_else(self):
         self.decide(decider=OP)
         self.assertEqual(self.step()["decider"], OP)

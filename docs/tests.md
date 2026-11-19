@@ -51,7 +51,8 @@ without `schedule`, an edit and `todo show` carrying it, `sync.py schedule set|s
 `tests/test_decision_steps.py` covers `sync.py decide`: a comment and a step assigned to the
 captain, tracked from then on, the captain's comment there relayed with `on`, their checking
 the step recorded once (the agent's own never), the to-do or card itself never completed, a
-step joining a tracked request without completing it, only the captain or an operator
+step joining a tracked request without completing it, a reopened step on a request that is
+closed or no longer assigned to the agent not completed again, only the captain or an operator
 deciding, a URL naming the project, cards, refusals, the dry run and the CLI;
 `tests/test_decisions_anywhere.py` covers decisions anywhere: `todo create` in another
 project (its own to-do set, or the config's `todos` `project` and `list`), its subtasks,

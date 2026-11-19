@@ -3066,6 +3066,8 @@ class Tools:
         if self.todo(q["id"], bucket, "subtask").get("completed"):
             self.log(f"{name}: already completed in Basecamp")
         else:
+            if rec.get("request") and not self.request_open(name, rec):
+                return False
             if was:
                 self.log(f"{name}: recorded done {was}, but Basecamp shows it open: completing it again")
             if self.refused(name, "owner"):
@@ -3088,6 +3090,21 @@ class Tools:
             return self.todo_complete(key)
         if not was:
             self.acknowledge_decided(key)
+        return True
+
+    def request_open(self, name, rec):
+        """True when the agent still owns request `rec`, as todo_complete requires before it writes: the reader has not
+        closed it, and Basecamp shows its to-do (card, step) active and assigned to the agent. Else logged, False."""
+        if rec.get("closed"):
+            self.log(f"{name}: the request was closed ({rec['closed']}), not completing it")
+            return False
+        me = self.agent()
+        got = self.todo(rec["todo"], rec.get("bucket"), rec.get("type") or "todo")
+        if me is not None and (got.get("status") not in (None, "active")
+                               or me not in [a.get("id") for a in got.get("assignees") or []]):
+            self.log(f"{name}: Basecamp no longer shows the request active and assigned to you "
+                     f"(status {got.get('status')!r}), not completing it")
+            return False
         return True
 
     def todo_show(self, ref, out=print):
