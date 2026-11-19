@@ -143,9 +143,18 @@ class Complete(Base):
         self.stub.subtasks_done.add("8")
         code, _ = self.cli("complete", "--todo", REF)
         self.assertEqual(code, 1)
-        self.assertIn("Basecamp shows its subtask 1 ('Merge the fix?') open: finish it first", self.log())
+        self.assertIn("Basecamp shows its subtask 7 ('Merge the fix?') open: finish it first", self.log())
         self.assertEqual(self.made("todos complete"), [])
         self.assertNotIn("completed", self.state("todos.json")["z-current"])
+
+    def test_a_todo_completed_in_basecamp_with_an_open_subtask_is_refused_and_not_recorded(self):
+        self.side("todos.json", {"ta-x": {"todo": TODO, "bucket": BUCKET, "subtasks": [
+            {"text": "Merge the fix?", "done": None, "id": 7}]}})
+        self.stub.todo_records[str(TODO)]["completed"] = True
+        self.stub.subtask_lists[str(TODO)] = [{"id": 7, "title": "Merge the fix?"}]
+        self.assertEqual(self.cli("complete", "--todo", REF)[0], 1)
+        self.assertIn("Basecamp shows its subtask 7 ('Merge the fix?') open", self.log())
+        self.assertNotIn("completed", self.state("todos.json")["ta-x"])
 
     def test_a_saved_step_deleted_in_basecamp_does_not_block_completion(self):
         self.side("todos.json", {"ta-x": {"todo": TODO, "bucket": BUCKET, "subtasks": [
@@ -244,9 +253,34 @@ class TodoCompleteReadBack(Base):
                                  "z-current": {"todo": 77, "on": True,
                                                "subtasks": [{"text": "New?", "done": None, "id": 8, "decider": CAPTAIN}]}})
         self.stub.subtasks_done.add("7")
+        self.stub.subtask_lists["77"] = [{"id": 7, "title": "Old?"}, {"id": 8, "title": "New?"}]
         self.assertEqual(self.cli("todo", "complete", "--todo", "77")[0], 0, self.log())
         self.assertEqual(self.made("subtasks complete"), [["subtasks", "complete", "8"]])
         self.assertIn("completed", self.state("todos.json")["z-current"])
+
+    def test_a_step_deleted_in_basecamp_is_skipped_and_the_live_one_completed(self):
+        self.side("todos.json", {"d": {"todo": 77, "on": True, "subtasks": [
+            {"text": "Old?", "done": "t", "id": 7, "decider": CAPTAIN},
+            {"text": "New?", "done": None, "id": 8, "decider": CAPTAIN}]}})
+        self.stub.subtask_lists["77"] = [{"id": 8, "title": "New?"}]  # step 7 deleted in Basecamp
+        self.assertEqual(self.cli("todo", "complete", "--todo", "d")[0], 0, self.log())
+        self.assertEqual(self.made("subtasks complete"), [["subtasks", "complete", "8"]])
+
+    def test_a_repeating_request_reopened_as_its_next_occurrence_is_not_completed(self):
+        self.stub.todo_records["42"] = {"id": 42, "content": "Do it", "completed": False, "status": "active",
+                                        "assignees": [{"id": ACTING}], "due_on": "2026-11-26",
+                                        "repetition_schedule": {"frequency": "weekly"}}
+        self.side("todos.json", {"request-42": {"todo": 42, "request": CAPTAIN, "completed": "2026-11-19T10:00:00Z",
+                                                "due_on": "2026-11-19", "repeats": {"frequency": "weekly"}}})
+        self.assertEqual(self.cli("todo", "complete", "--todo", "request-42")[0], 1)
+        self.assertIn("a schedule the sync has not read yet", self.log())
+        self.assertEqual(self.made("todos complete"), [])
+
+    def test_an_id_names_the_first_entry_for_todo_show(self):
+        self.side("todos.json", {"a-old": {"todo": 77, "completed": "2026-11-18T10:00:00Z"}, "z-current": {"todo": 77}})
+        code, out = self.cli("todo", "show", "--todo", "77")
+        self.assertEqual(code, 0, self.log())
+        self.assertEqual(json.loads(out)["key"], "a-old")
 
     def test_a_request_is_read_once_before_it_is_completed(self):
         self.stub.todo_records["42"] = {"id": 42, "content": "Do it", "completed": False, "status": "active",

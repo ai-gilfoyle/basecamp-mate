@@ -2911,13 +2911,15 @@ class Tools:
         self.log(f"todo track {key}: todo {tid}, cursor {cursor}")
         return True
 
-    def tracked(self, ref):
-        """The (key, record) of a tracked to-do, by key or by to-do id (an id: its open entry first, when one is)."""
+    def tracked(self, ref, open_first=False):
+        """The (key, record) of a tracked to-do, by key or by to-do id (an id with `open_first`: its open entry first,
+        when one is)."""
         state = self.load("todos.json", {})
         if ref in state:
             return ref, state[ref]
         hits = [(k, r) for k, r in state.items() if str(r["todo"]) == str(ref)]
-        hit = next((h for h in hits if not h[1].get("completed") and not h[1].get("closed")), hits[0] if hits else None)
+        hit = next((h for h in hits if open_first and not h[1].get("completed") and not h[1].get("closed")),
+                   hits[0] if hits else None)
         if hit is None:
             raise RuntimeError(f"no tracked to-do {ref} in todos.json")
         return hit
@@ -2949,20 +2951,22 @@ class Tools:
         decision with no step to complete, a login that may not post, a dry run). A to-do recorded completed that
         Basecamp shows open is completed again."""
         self.need_todos()
-        key, rec = self.tracked(ref)
+        key, rec = self.tracked(ref, open_first=True)
         name = f"todo complete {key}"
         if rec.get("closed"):
             self.log(f"{name}: the request was closed ({rec['closed']}), not completing it")
             return False
         bucket = rec.get("bucket")
         if rec.get("on"):  # a to-do or card that is not the agent's (decide): only its own steps are completed
-            targets = [(q["id"], "subtask") for q in rec.get("subtasks") or [] if q.get("decider")]
+            live = self.live_subtasks(rec["todo"], bucket)
+            targets = [(q["id"], "subtask") for q in rec.get("subtasks") or [] if q.get("decider") and str(q["id"]) in live]
+            read = [live[str(tid)] for tid, _ in targets]
         else:
             targets = [(rec["todo"], rec.get("type") or "todo")]
+            read = [self.todo(rec["todo"], bucket, rec.get("type") or "todo")]
         if not targets:
             self.log(f"{name}: no decision step of its own to complete")
             return False
-        read = [self.todo(tid, bucket, kind) for tid, kind in targets]
         left = [t for t, got in zip(targets, read) if not got.get("completed")]
         if left and rec.get("request") and not self.request_open(name, rec, None if rec.get("on") else read[0]):
             return False
@@ -3033,13 +3037,13 @@ class Tools:
         if self.agent_id is None or creator != self.agent_id:
             raise ValueError(f"{name}: it was created by {creator}, not the agent's login ({self.agent_id}), so it is "
                              "not the agent's to complete")
+        for q in self.live_subtasks(tid, bucket).values():
+            if not q.get("completed"):
+                raise ValueError(f"{name}: Basecamp shows its subtask {q.get('id')} "
+                                 f"({q.get('title') or q.get('content')!r}) open: finish it first")
         if todo.get("completed"):
             self.log(f"{name}: already completed in Basecamp")
         else:
-            for n, q in enumerate(self.bc("subtasks", "list", str(tid), "--all", project=bucket) or [], 1):
-                if not q.get("completed"):
-                    raise ValueError(f"{name}: Basecamp shows its subtask {n} ({q.get('title') or q.get('content')!r}) "
-                                     "open: finish it first (with `todo subtask` when todos.json tracks the to-do)")
             if self.refused(name, "owner"):
                 raise RuntimeError(f"{name}: the login may not post, so it was not completed")
             if self.dry:
@@ -3060,7 +3064,7 @@ class Tools:
         being tracked); run again on the last subtask, it completes a to-do still open (todo_complete). True once
         Basecamp shows the subtask (and, when it was the last, the to-do) completed."""
         self.need_todos()
-        key, rec = self.tracked(ref)
+        key, rec = self.tracked(ref, open_first=True)
         name = f"todo subtask {key} {number}"
         bucket = rec.get("bucket")
         subtasks = [dict(q) for q in rec.get("subtasks") or []]
@@ -3090,12 +3094,18 @@ class Tools:
                 self.save_json("todos.json", state)
             self.log(f"{name}: done, {sum(not s['done'] for s in subtasks)} left on todo {rec['todo']}")
             self.ledger("answered", key=key, via="todo subtask")
-        if not rec.get("request") and all(s["done"] and self.todo(s["id"], bucket, "subtask").get("completed")
-                                          for s in subtasks if s is not q):
+        siblings = [s for s in subtasks if s is not q]
+        live = self.live_subtasks(rec["todo"], bucket) if siblings and not rec.get("request") else {}
+        if not rec.get("request") and all(s["done"] and live[str(s["id"])].get("completed")
+                                          for s in siblings if str(s["id"]) in live):
             return self.todo_complete(key)
         if not was:
             self.acknowledge_decided(key)
         return True
+
+    def live_subtasks(self, tid, bucket=None):
+        """{str(subtask id): subtask} for the subtasks Basecamp lists now on to-do (or card) `tid`."""
+        return {str(q.get("id")): q for q in self.bc("subtasks", "list", str(tid), "--all", project=bucket) or []}
 
     def request_open(self, name, rec, got=None):
         """True when the agent still owns request `rec`, as todo_complete requires before it writes: the reader has not
@@ -3114,6 +3124,10 @@ class Tools:
                                or me not in [a.get("id") for a in got.get("assignees") or []]):
             self.log(f"{name}: Basecamp no longer shows the request active and assigned to you "
                      f"(status {got.get('status')!r}), not completing it")
+            return False
+        if "due_on" in rec and todo_schedule(got) != {k: rec.get(k) for k in ("due_on", "repeats")}:
+            self.log(f"{name}: Basecamp shows the request with a schedule the sync has not read yet (due "
+                     f"{got.get('due_on')!r}, maybe its next occurrence), not completing it")
             return False
         return True
 
